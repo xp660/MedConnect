@@ -13,13 +13,13 @@
 ## 目前狀態（最後更新：2026-09-05）
 
 - [x] 0. 前置作業：`git init`（repo 已存在，含 initial commit）
-- [ ] 1a 骨架
+- [x] 1a 骨架（commit `246fed4`：4 專案＋DI 組裝＋docker-compose(MySQL)＋health check，`dotnet run` 可起、`/health` 回 200）
 - [ ] 1b Domain + DB
 - [ ] 1c 併發驗證（全案最重要里程碑）
 - [ ] 1d 補齊 MVP
 - [ ] 1e 加值
 
-規劃文件（`architecture-plan.md` v1.1）與本進度表已完成，即將進入 1a。
+1a 已完成並驗證，準備進入 1b（Domain + DB）。
 
 ---
 
@@ -63,3 +63,4 @@
 
 - 2026-09-05：建立本檔案，記錄五階段 Roadmap 與執行迴圈（尚未開始任何階段）。
 - 2026-09-05：確認 repo 已有 initial commit，勾選「0. 前置作業：git init」；準備進入 1a。
+- 2026-09-05：完成 1a 骨架（4 專案＋DI 組裝＋docker-compose(MySQL)＋health check），`dotnet build`/`dotnet run`/`GET /health` 皆驗證通過，commit `246fed4`。docker-compose.yml 本機無 Docker CLI，僅人工檢視語法，未實際 `docker compose up` 驗證。
