@@ -1,7 +1,6 @@
 services:
   mysql:
-    image: mysql:8.0
-    container_name: medconnect-mysql
+    image: mysql:8.0.39
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
@@ -9,7 +8,7 @@ services:
       MYSQL_USER: medconnect
       MYSQL_PASSWORD: medconnect
     ports:
-      - "3306:3306"
+      - "${MYSQL_PORT:-3306}:3306"
     volumes:
       - medconnect-mysql-data:/var/lib/mysql
     healthcheck:
