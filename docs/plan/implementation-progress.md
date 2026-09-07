@@ -10,16 +10,16 @@
 
 ---
 
-## 目前狀態（最後更新：2026-09-05）
+## 目前狀態（最後更新：2026-09-07）
 
 - [x] 0. 前置作業：`git init`（repo 已存在，含 initial commit）
 - [x] 1a 骨架（commit `246fed4`：4 專案＋DI 組裝＋docker-compose(MySQL)＋health check，`dotnet run` 可起、`/health` 回 200）
-- [ ] 1b Domain + DB
+- [x] 1b Domain + DB（commit `e35614e`：ScheduleSlot/Appointment entity＋invariant＋18 個 Domain unit test 全綠＋EF 設定＋version interceptor＋migration＋seed；已用真實 Docker MySQL 8.0.39 驗證 migration 套用、CHECK constraint、generated column 皆如預期運作；獨立 blind review 抓到 6 項發現，5 項已修正，1 項（TimeSlot 用 Complex Type 而非文件寫的 owned type）與使用者確認後以 architecture-plan.md §0 v1.2 版本化更新處理）
 - [ ] 1c 併發驗證（全案最重要里程碑）
 - [ ] 1d 補齊 MVP
 - [ ] 1e 加值
 
-1a 已完成並驗證，準備進入 1b（Domain + DB）。
+1b 已完成並驗證，準備進入 1c（併發驗證，全案最重要里程碑）。
 
 ---
 
@@ -64,3 +64,5 @@
 - 2026-09-05：建立本檔案，記錄五階段 Roadmap 與執行迴圈（尚未開始任何階段）。
 - 2026-09-05：確認 repo 已有 initial commit，勾選「0. 前置作業：git init」；準備進入 1a。
 - 2026-09-05：完成 1a 骨架（4 專案＋DI 組裝＋docker-compose(MySQL)＋health check），`dotnet build`/`dotnet run`/`GET /health` 皆驗證通過，commit `246fed4`。docker-compose.yml 本機無 Docker CLI，僅人工檢視語法，未實際 `docker compose up` 驗證。
+- 2026-09-07：本機已有 Docker CLI，補做 1a 遺留的驗證：`docker compose up` 實際跑起 MySQL，healthcheck 如預期在數秒內轉為 healthy。
+- 2026-09-07：完成 1b（ScheduleSlot/Appointment entity＋invariant＋18 個 Domain unit test＋EF 設定＋version interceptor＋migration＋seed），commit `e35614e`。全程用真實 Docker MySQL 8.0.39 驗證（非僅 unit test 綠燈）：migration 套用成功、CHECK constraint 生效、generated column + partial unique index 正確擋下/放行重複預約、`dotnet run` 會自動 migrate+seed 且 `/health` 回 200。獨立 blind reviewer（只給 diff＋CLAUDE.md＋architecture-plan.md）抓到 6 項發現，5 項已修正（tinyint 符號性、DB 欄位 DEFAULT、FK ON DELETE 行為、文件註解），1 項（TimeSlot 用 EF Core Complex Type 而非文件寫的 owned type）與使用者確認後改為版本化更新 architecture-plan.md（§0 v1.2），沒有默默覆寫原文。實作過程中也順帶驗證了 §12 第 2、3 項 Deferred Decision，並發現一個新的 MySQL 限制（generated column 依賴的欄位其 FK 不可用 ON DELETE CASCADE），已記入 §0 v1.2。
