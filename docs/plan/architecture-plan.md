@@ -47,6 +47,15 @@
 5. **補充說明（無結構變更）**（§6.1 `schedule_slots`）：`ux_slot_doctor_start` 與 `ix_slot_doctor_time` 兩個索引前綴重疊並非疏漏——前者是業務唯一性約束，後者是 Schedule Query 的 covering index，兩者目的不同，予以保留並寫明原因。
 6. **新增**（§5.2）：明確的 Exception 攔截對應表，區分 `DbUpdateConcurrencyException`（→ `CONCURRENCY_CONFLICT`）與 `DbUpdateException`/MySQL duplicate entry on `ux_appt_slot_active_patient`（→ `DUPLICATE_BOOKING`），避免實作時混在同一個 catch 區塊處理。
 
+### v1.2 — 2026-09-07：Phase 1b 實作後的驗證與修正
+
+Phase 1b（ScheduleSlot/Appointment entity + Domain unit test + EF 設定 + migration + seed）實作完成、經過一次獨立 blind code review 後，有 1 項與使用者確認過方向的 [Decision] 文字修正，另有數項 §12 待驗證清單項目已用真實 MySQL 8.0.39（Docker）驗證，記錄如下：
+
+1. **修正**（§3.5）：原文「`TimeSlot` 為 Value Object（EF Core owned type）」改為「EF Core Complex Type」。實作時改用 EF Core 8+ 引入的 Complex Type（`ComplexProperty`）而非 `OwnsOne`，因為 Complex Type 是專門為「無獨立身分的純值物件」設計的較新機制，語意更貼近 `TimeSlot` 的本質。已與使用者確認採用此技術選擇並更新本文件用詞。
+   **副作用（新發現，非文件原有假設）**：EF Core 9 目前不支援對 Complex Type 的屬性建立 composite index（`HasIndex()` 的 lambda 與字串路徑 overload 皆在 design-time 丟例外；底層 `IMutableEntityType.AddIndex()` 也拒絕「index 屬性須全部屬於同一個 entity type」）。`ux_slot_doctor_start`／`ix_slot_doctor_time`（跨 `doctor_id` 與 `TimeSlot.StartUtc`）因此改在 migration 用原始 SQL（`migrationBuilder.Sql(...)`）直接建立，不透過 EF 模型宣告；代價是這兩個 index 對 EF 的 model diff 不可見，未來若要調整需手動維護 migration。
+2. **驗證通過**（§12 第 2 項）：實測 MySQL 版本為 `8.0.39`（≥ 8.0.16），`CHECK` constraint（`ck_slot_capacity`/`ck_slot_booked`/`ck_slot_time_order`）在此版本下確認真的會擋下違規寫入（非文件退化為 no-op）。
+3. **驗證通過，並發現新限制**（§12 第 3 項）：Pomelo 的 `HasComputedColumnSql(..., stored: true)` 確認能正確映射並產出可用的 generated column（`active_patient_id`），partial-unique-index 模擬（同 slot 同病人僅一筆有效預約）也用真實資料驗證行為正確（取消後可再次預約、重複預約會被擋下）。**新發現**：MySQL 不允許「被 STORED generated column 依賴的欄位」所在的 FK 使用 `ON DELETE CASCADE`/`SET NULL`（會丟 Error 1215），因此 `fk_appt_patient`（`active_patient_id` 依賴 `patient_id`）改為 `ON DELETE RESTRICT`；順帶把其餘三個 FK（`fk_slot_doctor`/`fk_patients_user`/`fk_appt_slot`）也統一改為 `RESTRICT`，因為 §6.1 原始 SQL 本來就未寫 `ON DELETE`（MySQL 預設即 RESTRICT），EF Core 的慣例預設值 `CASCADE`其實是與文件本身不一致，一併修正對齊。
+
 ---
 
 ## 1. 專案目標與 MVP 範圍
@@ -153,7 +162,7 @@ MVP 核心 API 嚴格限定為四個：
 
 **[Decision]（2026-09-05 修訂）**：MVP 的 `Cancel()` **刻意不檢查取消時間窗**（例如「看診前 N 小時內不可取消」）。此前 §7.4 曾列出 `409 CANCELLATION_WINDOW_CLOSED` 但本節從未定義對應規則，屬文件不一致，已於本輪修正中從 §7.4 移除該狀態碼。若未來要做，見 §12 Deferred Decision（需注意：判斷時間窗需要 `Appointment` 取得對應 `ScheduleSlot` 的時間，屬跨 aggregate 讀取，非單純加一行判斷）。
 
-`TimeSlot` 為 Value Object（EF Core owned type）。
+`TimeSlot` 為 Value Object（**[Decision]（2026-09-07 修訂，見 §0 v1.2）**：EF Core Complex Type，非 owned type——見 §0 v1.2 說明）。
 
 **[Decision]**：時間來源注入 **`TimeProvider`**（.NET 8+ BCL 型別），不直接呼叫 `DateTime.UtcNow`，測試用 `FakeTimeProvider`，避免測試隨真實時間漂移。
 
@@ -669,8 +678,8 @@ Domain Unit Test（~25個，無 I/O）
 以下項目**尚未決定**，或雖有預設方向但**必須先實測驗證**才能視為定案，實作時不應假設它們已成立：
 
 1. **[Deferred Decision — 最高優先]** Pomelo 的 `IsConcurrencyToken()` + MySQL 受影響列數行為，特別是連線字串 `UseAffectedRows` 設定對 EF 併發偵測的實際影響。
-2. **[Deferred Decision]** 實際使用的 MySQL 版本是否 ≥ 8.0.16（影響 `CHECK` constraint 是否真的被強制執行）。
-3. **[Deferred Decision]** Pomelo 是否支援 `HasComputedColumnSql(..., stored: true)` 映射 generated column，以及 migration 產出是否正確。
+2. ~~**[Deferred Decision]** 實際使用的 MySQL 版本是否 ≥ 8.0.16（影響 `CHECK` constraint 是否真的被強制執行）。~~ **[驗證通過，見 §0 v1.2]** 1b 用 Docker MySQL 8.0.39 實測，`CHECK` constraint 確認生效（違規 INSERT 被擋下並回傳 Error 3819）。
+3. ~~**[Deferred Decision]** Pomelo 是否支援 `HasComputedColumnSql(..., stored: true)` 映射 generated column，以及 migration 產出是否正確。~~ **[驗證通過，並發現新限制，見 §0 v1.2]** 1b 已用真實 MySQL 驗證 generated column 行為正確；另發現「FK 若被 STORED generated column 依賴的欄位參照，不可用 `ON DELETE CASCADE`」的 MySQL 限制，非本項原始問題範圍但一併記錄。
 4. **[Deferred Decision]** `DateTime`/`DateTimeOffset` 在 Pomelo 上對 `DATETIME(6)` 的實際映射與往返精度。
 5. **[Deferred Decision]** MediatR 目前版本的授權條款細節，以及是否改用替代方案（`Mediator`、Wolverine、DI+Scrutor）。
 6. **[Deferred Decision]** `WebApplicationFactory` + `Task.WhenAll` 是否能產生真正的並行請求（而非被排程成近似循序）——需在撰寫併發測試時驗證。
