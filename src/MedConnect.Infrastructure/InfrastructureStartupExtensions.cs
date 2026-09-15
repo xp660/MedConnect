@@ -12,13 +12,35 @@ namespace MedConnect.Infrastructure;
 /// </summary>
 public static class InfrastructureStartupExtensions
 {
-    public static async Task MigrateAndSeedAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 只套用 migration，不塞 seed 資料。1c 的 Testcontainers 測試基礎設施應該呼叫這個，
+    /// 讓測試資料庫只有正確的 schema，不會混入 DatabaseSeeder 產生的假醫生/假時段，
+    /// 避免污染需要精確斷言數字的併發測試。
+    /// </summary>
+    public static async Task MigrateAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        using var scope = services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<MedConnectDbContext>();
+        await db.Database.MigrateAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// 只塞 seed 資料，假設 migration 已經套用過。
+    /// </summary>
+    public static async Task SeedAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
     {
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MedConnectDbContext>();
         var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
-
-        await db.Database.MigrateAsync(cancellationToken);
         await DatabaseSeeder.SeedAsync(db, timeProvider, cancellationToken);
+    }
+
+    /// <summary>
+    /// 本機開發用：migrate + seed 一次做完。Program.cs 在 Development 環境呼叫這個，行為與 1b 時相同。
+    /// </summary>
+    public static async Task MigrateAndSeedAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        await services.MigrateAsync(cancellationToken);
+        await services.SeedAsync(cancellationToken);
     }
 }

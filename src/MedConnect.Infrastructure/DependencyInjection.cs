@@ -1,5 +1,7 @@
+using MedConnect.Application.Abstractions;
 using MedConnect.Infrastructure.Persistence;
 using MedConnect.Infrastructure.Persistence.Interceptors;
+using MedConnect.Infrastructure.Persistence.Repositories;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +24,10 @@ public static class DependencyInjection
                 .UseMySql(connectionString, ServerVersion.AutoDetect(connectionString))
                 .AddInterceptors(sp.GetRequiredService<ConcurrencyVersionInterceptor>());
         });
+
+        services.AddScoped<IScheduleSlotRepository, ScheduleSlotRepository>();
+        services.AddScoped<IAppointmentRepository, AppointmentRepository>();
+        services.AddScoped<IUnitOfWork, UnitOfWork>();
 
         return services;
     }

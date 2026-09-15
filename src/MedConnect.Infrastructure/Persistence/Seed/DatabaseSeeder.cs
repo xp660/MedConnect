@@ -1,4 +1,5 @@
 using MedConnect.Domain.Entities;
+using MedConnect.Domain.Enums;
 using MedConnect.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
 
@@ -38,6 +39,17 @@ public static class DatabaseSeeder
         }
 
         db.ScheduleSlots.AddRange(slots);
+        await db.SaveChangesAsync(cancellationToken);
+
+        // 1c 手動測試訂位流程用的固定病人：1c 還沒有 Login/JWT（1d 才做），沒有其他管道能產生
+        // Patient。PasswordHash 只是滿足 users 表的 NOT NULL 約束，不是真的雜湊密碼，1d 接上真正
+        // 的密碼雜湊機制前，這個帳號不能、也不應該被拿來登入。
+        var testUser = new User("test-patient@medconnect.local", "not-a-real-password-hash", UserRole.Patient, now);
+        db.Users.Add(testUser);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var testPatient = new Patient(testUser.Id, "Test Patient", now);
+        db.Patients.Add(testPatient);
         await db.SaveChangesAsync(cancellationToken);
     }
 }

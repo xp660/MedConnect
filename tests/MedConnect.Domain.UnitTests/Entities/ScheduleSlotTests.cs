@@ -130,6 +130,63 @@ public class ScheduleSlotTests
     }
 
     [Fact]
+    public void Constructor_SetsUpdatedAtUtcEqualToCreatedAtUtc()
+    {
+        var slot = CreateOpenSlot();
+
+        slot.UpdatedAtUtc.Should().Be(slot.CreatedAtUtc);
+        slot.UpdatedAtUtc.Should().Be(Now.UtcDateTime);
+    }
+
+    [Fact]
+    public void Book_WhenSuccessful_SetsUpdatedAtUtcToGivenNow()
+    {
+        var slot = CreateOpenSlot();
+        var bookedAt = Now.AddMinutes(5);
+
+        slot.Book(bookedAt);
+
+        slot.UpdatedAtUtc.Should().Be(bookedAt.UtcDateTime);
+        slot.CreatedAtUtc.Should().Be(Now.UtcDateTime);
+    }
+
+    [Fact]
+    public void Book_WhenItThrows_DoesNotChangeUpdatedAtUtc()
+    {
+        var slot = CreateOpenSlot();
+        slot.Close(Now);
+        var attemptedAt = Now.AddMinutes(5);
+
+        var act = () => slot.Book(attemptedAt);
+
+        act.Should().Throw<SlotClosedException>();
+        slot.UpdatedAtUtc.Should().Be(Now.UtcDateTime);
+    }
+
+    [Fact]
+    public void Release_WhenSuccessful_SetsUpdatedAtUtcToGivenNow()
+    {
+        var slot = CreateOpenSlot();
+        slot.Book(Now);
+        var releasedAt = Now.AddMinutes(5);
+
+        slot.Release(releasedAt);
+
+        slot.UpdatedAtUtc.Should().Be(releasedAt.UtcDateTime);
+    }
+
+    [Fact]
+    public void Close_SetsUpdatedAtUtcToGivenNow()
+    {
+        var slot = CreateOpenSlot();
+        var closedAt = Now.AddMinutes(5);
+
+        slot.Close(closedAt);
+
+        slot.UpdatedAtUtc.Should().Be(closedAt.UtcDateTime);
+    }
+
+    [Fact]
     public void FakeTimeProvider_GetUtcNow_CanDriveDomainMethodsWithoutRealClock()
     {
         var timeProvider = new FakeTimeProvider(Now);

@@ -56,6 +56,10 @@ Phase 1b（ScheduleSlot/Appointment entity + Domain unit test + EF 設定 + migr
 2. **驗證通過**（§12 第 2 項）：實測 MySQL 版本為 `8.0.39`（≥ 8.0.16），`CHECK` constraint（`ck_slot_capacity`/`ck_slot_booked`/`ck_slot_time_order`）在此版本下確認真的會擋下違規寫入（非文件退化為 no-op）。
 3. **驗證通過，並發現新限制**（§12 第 3 項）：Pomelo 的 `HasComputedColumnSql(..., stored: true)` 確認能正確映射並產出可用的 generated column（`active_patient_id`），partial-unique-index 模擬（同 slot 同病人僅一筆有效預約）也用真實資料驗證行為正確（取消後可再次預約、重複預約會被擋下）。**新發現**：MySQL 不允許「被 STORED generated column 依賴的欄位」所在的 FK 使用 `ON DELETE CASCADE`/`SET NULL`（會丟 Error 1215），因此 `fk_appt_patient`（`active_patient_id` 依賴 `patient_id`）改為 `ON DELETE RESTRICT`；順帶把其餘三個 FK（`fk_slot_doctor`/`fk_patients_user`/`fk_appt_slot`）也統一改為 `RESTRICT`，因為 §6.1 原始 SQL 本來就未寫 `ON DELETE`（MySQL 預設即 RESTRICT），EF Core 的慣例預設值 `CASCADE`其實是與文件本身不一致，一併修正對齊。
 
+### v1.3 — 2026-09-12：Phase 1c 開始前，解決 MediatR 授權這項 Deferred Decision
+
+1. **驗證通過並決策確定**（§12 第 5 項）：查證 MediatR 現況——v13.0.0 起改為商業授權（依公司規模分級收費，另有免費 Community 版但需註冊 mediatr.io 帳號取得 license key，僅適用年營收 <$5M / 非營利 / 教育 / 非正式生產環境）；v12.x（最後一版 v12.5.0）維持原本 Apache 2.0 授權，可永久免費使用，不需帳號或 license key，但不再有新版本。與使用者確認：**專案釘住 `MediatR` v12.5.0（Apache 2.0）**，不採用 v13+ 商業版（避免引入帳號/license key 這類與 4 支 API 規模不相稱的操作負擔，見 §9.1），也不改用其他免費替代品（`Mediator`/`FreeMediator` 等）——保留使用「正牌 MediatR」在面試情境下的可辨識度與可討論性。§9.2「採用 MediatR」的決策本身不變，本項只解決「用哪個版本」。
+
 ---
 
 ## 1. 專案目標與 MVP 範圍
@@ -681,7 +685,7 @@ Domain Unit Test（~25個，無 I/O）
 2. ~~**[Deferred Decision]** 實際使用的 MySQL 版本是否 ≥ 8.0.16（影響 `CHECK` constraint 是否真的被強制執行）。~~ **[驗證通過，見 §0 v1.2]** 1b 用 Docker MySQL 8.0.39 實測，`CHECK` constraint 確認生效（違規 INSERT 被擋下並回傳 Error 3819）。
 3. ~~**[Deferred Decision]** Pomelo 是否支援 `HasComputedColumnSql(..., stored: true)` 映射 generated column，以及 migration 產出是否正確。~~ **[驗證通過，並發現新限制，見 §0 v1.2]** 1b 已用真實 MySQL 驗證 generated column 行為正確；另發現「FK 若被 STORED generated column 依賴的欄位參照，不可用 `ON DELETE CASCADE`」的 MySQL 限制，非本項原始問題範圍但一併記錄。
 4. **[Deferred Decision]** `DateTime`/`DateTimeOffset` 在 Pomelo 上對 `DATETIME(6)` 的實際映射與往返精度。
-5. **[Deferred Decision]** MediatR 目前版本的授權條款細節，以及是否改用替代方案（`Mediator`、Wolverine、DI+Scrutor）。
+5. ~~**[Deferred Decision]** MediatR 目前版本的授權條款細節，以及是否改用替代方案（`Mediator`、Wolverine、DI+Scrutor）。~~ **[已決策，見 §0 v1.3]** 釘住 `MediatR` v12.5.0（Apache 2.0，最後一版免費授權），不採用 v13+ 商業版，不改用替代方案。
 6. **[Deferred Decision]** `WebApplicationFactory` + `Task.WhenAll` 是否能產生真正的並行請求（而非被排程成近似循序）——需在撰寫併發測試時驗證。
 7. **[Deferred Decision]** Retry 機制的具體實作方式與導入時機（§9.5）。
 8. **[Deferred Decision]** JWT 撤銷機制的最終方案（refresh token / denylist / token_version）（§9.7）。

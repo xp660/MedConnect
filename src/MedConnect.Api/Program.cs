@@ -1,3 +1,4 @@
+using MedConnect.Api.ExceptionHandling;
 using MedConnect.Application;
 using MedConnect.Infrastructure;
 
@@ -12,6 +13,9 @@ builder.Services.AddOpenApi();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+builder.Services.AddProblemDetails();
+
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
@@ -22,6 +26,8 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
     await app.Services.MigrateAndSeedAsync();
 }
+
+app.UseExceptionHandler();
 
 app.UseHttpsRedirection();
 
