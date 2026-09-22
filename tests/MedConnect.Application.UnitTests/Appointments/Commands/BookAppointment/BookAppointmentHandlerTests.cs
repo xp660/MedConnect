@@ -25,6 +25,17 @@ public class BookAppointmentHandlerTests
     private readonly IUnitOfWork _unitOfWork = Substitute.For<IUnitOfWork>();
     private readonly FakeTimeProvider _timeProvider = new(Now);
 
+    public BookAppointmentHandlerTests()
+    {
+        // ExecuteInTransactionAsync 的替身必須真的去執行傳進來的委派，否則 handler 的主體
+        // （兩次 SaveChanges、建立 Appointment）根本不會跑，測試就會變成在測一個空殼。
+        _unitOfWork
+            .ExecuteInTransactionAsync(
+                Arg.Any<Func<CancellationToken, Task<BookAppointmentResult>>>(),
+                Arg.Any<CancellationToken>())
+            .Returns(ci => ci.Arg<Func<CancellationToken, Task<BookAppointmentResult>>>()(ci.Arg<CancellationToken>()));
+    }
+
     private BookAppointmentHandler CreateHandler() =>
         new(_scheduleSlotRepository, _appointmentRepository, _unitOfWork, _timeProvider);
 
@@ -36,7 +47,7 @@ public class BookAppointmentHandlerTests
     }
 
     [Fact]
-    public async Task Handle_WhenSlotExists_BooksSlotAndCreatesAppointmentAndSavesExactlyOnce()
+    public async Task Handle_WhenSlotExists_BooksSlotAndCreatesAppointmentAndSavesTwiceInOneTransaction()
     {
         var slot = CreateOpenSlot(capacity: 2);
         _scheduleSlotRepository.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(slot);
@@ -47,7 +58,13 @@ public class BookAppointmentHandlerTests
         slot.BookedCount.Should().Be(1);
         _scheduleSlotRepository.Received(1).Update(slot);
         _appointmentRepository.Received(1).Add(Arg.Is<Appointment>(a => a.PatientId == 7 && a.SlotId == slot.Id));
-        await _unitOfWork.Received(1).SaveChangesAsync(Arg.Any<CancellationToken>());
+
+        // 兩次而非一次：schedule_slots 的 UPDATE 與 appointments 的 INSERT 被刻意拆成兩次
+        // flush，才能保證 UPDATE 先拿到 X 鎖（見 IUnitOfWork.ExecuteInTransactionAsync）。
+        // 兩次都必須在同一筆交易內，所以 ExecuteInTransactionAsync 也只能被呼叫一次。
+        await _unitOfWork.Received(2).SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _unitOfWork.Received(1).ExecuteInTransactionAsync(
+            Arg.Any<Func<CancellationToken, Task<BookAppointmentResult>>>(), Arg.Any<CancellationToken>());
         result.PatientId.Should().Be(7);
         result.Status.Should().Be(AppointmentStatus.Booked);
     }
@@ -63,6 +80,8 @@ public class BookAppointmentHandlerTests
         await act.Should().ThrowAsync<ScheduleSlotNotFoundException>();
         _appointmentRepository.DidNotReceive().Add(Arg.Any<Appointment>());
         await _unitOfWork.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+        await _unitOfWork.DidNotReceive().ExecuteInTransactionAsync(
+            Arg.Any<Func<CancellationToken, Task<BookAppointmentResult>>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]
@@ -78,6 +97,10 @@ public class BookAppointmentHandlerTests
         await act.Should().ThrowAsync<SlotFullException>();
         _appointmentRepository.DidNotReceive().Add(Arg.Any<Appointment>());
         await _unitOfWork.DidNotReceive().SaveChangesAsync(Arg.Any<CancellationToken>());
+
+        // 時段已滿應該在開交易之前就被擋下來，不該白開一筆交易再回滾。
+        await _unitOfWork.DidNotReceive().ExecuteInTransactionAsync(
+            Arg.Any<Func<CancellationToken, Task<BookAppointmentResult>>>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

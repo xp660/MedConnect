@@ -20,6 +20,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             SlotClosedException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),
             SlotInPastException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),
             ConcurrencyConflictException => (StatusCodes.Status409Conflict, "CONCURRENCY_CONFLICT"),
+            TransientConflictException => (StatusCodes.Status409Conflict, "TRANSIENT_CONFLICT"),
             DuplicateBookingException => (StatusCodes.Status409Conflict, "DUPLICATE_BOOKING"),
             _ => (0, string.Empty)
         };

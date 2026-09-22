@@ -60,6 +60,47 @@ Phase 1b（ScheduleSlot/Appointment entity + Domain unit test + EF 設定 + migr
 
 1. **驗證通過並決策確定**（§12 第 5 項）：查證 MediatR 現況——v13.0.0 起改為商業授權（依公司規模分級收費，另有免費 Community 版但需註冊 mediatr.io 帳號取得 license key，僅適用年營收 <$5M / 非營利 / 教育 / 非正式生產環境）；v12.x（最後一版 v12.5.0）維持原本 Apache 2.0 授權，可永久免費使用，不需帳號或 license key，但不再有新版本。與使用者確認：**專案釘住 `MediatR` v12.5.0（Apache 2.0）**，不採用 v13+ 商業版（避免引入帳號/license key 這類與 4 支 API 規模不相稱的操作負擔，見 §9.1），也不改用其他免費替代品（`Mediator`/`FreeMediator` 等）——保留使用「正牌 MediatR」在面試情境下的可辨識度與可討論性。§9.2「採用 MediatR」的決策本身不變，本項只解決「用哪個版本」。
 
+### v1.4 — 2026-09-18：Phase 1c 併發測試實作後，兩項被實測推翻的假設
+
+Phase 1c 的 §8.5 招牌測試（Testcontainers + 真實 MySQL 8.0.39 + 50 個病人搶 Capacity=5）第一次跑起來就推翻了本文件兩項 [Decision] 的隱含假設。依 §7 版本保留規則，原文一律保留，於下方加註適用範圍，不直接覆寫。
+
+1. **新增（§5.2 例外對映表的缺口）**：實測發現 Booking 在高併發下會大量觸發 **InnoDB 死結（MySQL error 1213）**，而 1213 不在 §5.2 的對映表內，會以未對映的 `InvalidOperationException` 外洩成 HTTP 500。首次實測 50 個請求中有 **47 個**是死結。
+
+   **根因（已用 `SHOW ENGINE INNODB STATUS` 的 LATEST DETECTED DEADLOCK 報告確認，非推測）**：兩個交易同時 `HOLDS lock mode S` 又 `WAITING FOR lock_mode X`，鎖在 `schedule_slots` 同一列。S 鎖來自 `appointments` INSERT 的 `fk_appt_slot` 外鍵檢查（需確認父列存在），X 鎖來自 `schedule_slots` 的 UPDATE。關鍵在於 **EF Core 把 INSERT 排在 UPDATE 之前**：當 principal 是 *Modified*（而非 Added）時，EF 的 `CommandBatchPreparer` 不會建立相依邊，語句順序退回 `ModificationCommandComparer` 的**資料表名稱字典序**，`appointments` < `schedule_slots`。因此每個交易都是「先拿 S、再想升級成 X」，互相等待成死結。
+
+   **同時證實無效的修法**：調整 entity 加入 change tracker 的順序**不能**影響語句順序——原本的 `BookAppointmentHandler` 就已經是先 `Update(slot)` 才 `Add(appointment)`，實際 SQL 仍是 INSERT 在前。
+
+   **採用的修法（已與使用者確認）**：`IUnitOfWork` 新增 `ExecuteInTransactionAsync<T>()`，Booking 在同一筆顯式交易內拆成兩次 `SaveChangesAsync`——先 UPDATE `schedule_slots`（取得 X 鎖）、再 INSERT `appointments`（做 FK 檢查）。實測 5 輪共 250 個請求，死結 **0 次**。代價是單筆預約由「可能批次成一次來回」變成保證兩次來回。未採用 `SELECT ... FOR UPDATE`（放棄樂觀鎖即放棄 §1 的核心賣點），亦**未**加入任何 retry（是否加 retry 為獨立決策，見 §12）。
+
+   **衍生的新風險與其驗證**：拆成兩次 flush 後出現「第一次 UPDATE 已成功、第二次 INSERT 才失敗」的視窗。已新增專門的整合測試（`BookingTransactionRollbackTests`）以重複預約重現此情境，實測確認顯式交易完整回滾，`booked_count` 與 `version` 皆未被推進、兩表無 drift。
+
+2. **限縮適用範圍（§8.5 斷言第 2、4 條）**：§8.5 同時要求「`BookedCount == min(N, Capacity)`（50 人搶 5 → 恰為 5）」與「第一版**不啟用 retry**」。實測證明這兩條**在物理上互斥**，且與實作正確性無關：50 個請求在同一瞬間都讀到 `version = 0`，樂觀鎖的 CAS 每一輪至多一個贏家，要填滿 5 個名額需要 5 個回合，而「5 個回合」的定義就是 retry。
+
+   **證據**：在完全排除死結變因的對照實驗中（以原生 SQL 重現 handler 語意、但順序改為 UPDATE-先於-INSERT），連續 3 次皆為「1 成功 / 49 CONCURRENCY_CONFLICT，0 死結」，`booked_count == active_appointments == 1`。修好死結後的正式測試則落在 **2～3 成功**之間（5 輪實測：3/3/3/2/3），因真實請求間的延遲抖動讓部分請求得以讀到較新的 version——即成功數本質上是**非確定性**的，`== 5` 是一條會 flaky 的斷言。
+
+   **v1 適用範圍（已與使用者確認）**：§8.5 下方斷言清單第 2 條與第 4 條**僅在啟用 retry 的版本（v2）成立**，v1 不適用。v1 的正確斷言改為「至少賣出 1 個、成功數 ≤ Capacity、`BookedCount == 實際成功數`、`COUNT(active appointments) == BookedCount`」。第 1、3、5、6、7 條不受影響，完全保留。原文一併保留於 §8.5，未刪除。
+
+   **刻意不在本輪一併決定的事**：是否加入 retry、重試次數、只對死結重試還是也對 concurrency conflict 重試、以及 retry 是否會讓某些請求因排隊順序而系統性地更容易搶到（公平性），皆列為獨立決策，見 §12。
+
+### v1.5 — 2026-09-21：補齊死結（1213）的例外轉譯，與 retry 無關的獨立修正
+
+v1.4 修掉了死結的**成因**（S→X 鎖升級），但沒有替死結補上例外轉譯——`UnitOfWork.SaveChangesAsync()` 當時完全不認得 MySqlError 1213，若死結真的發生仍會以未對映例外外洩成 HTTP 500。本輪補齊這個錯誤處理完整性缺口，**不涉及、也未實作任何 retry 邏輯**（retry 本身仍是 §12 第 7 項的獨立待決事項）。
+
+1. **新增**：`TransientConflictException`（Application 層），與 `ConcurrencyConflictException` 刻意分開，理由見該類別的 XML 文件註解——兩者雖然對客戶端都是「可重試」，但成因結構不同（version CAS 失敗 vs InnoDB 主動犧牲交易），未來若要針對其中一種調整重試策略，分開的型別能避免屆時要重新拆開。
+2. **修正（§5.2 例外對映表）**：新增第三列 `InvalidOperationException` → `TRANSIENT_CONFLICT`。**這裡有一個值得記錄的意外**：原本預期死結會跟 `DUPLICATE_BOOKING` 那列一樣是 `DbUpdateException`，但實測發現完全不是——因為 Booking 現在是在顯式交易（`ExecuteInTransactionAsync`）裡呼叫 `SaveChangesAsync`，EF Core 的 `ExecutionStrategy` 偵測到例外看似 transient、又處於使用者自管交易中且未設定 `EnableRetryOnFailure()`，判定無法安全自動重試，於是把原始例外包成 `InvalidOperationException` 往外丟，訊息還會建議去開 `EnableRetryOnFailure()`。用一組與 booking 無關、兩個 slot 故意用相反鎖定順序更新的對照實驗重現死結，5 次重現、5 次都是同一個形狀：`InvalidOperationException -> DbUpdateException -> MySqlException{ErrorCode=LockDeadlock}`。若照最初直覺寫 `catch (DbUpdateException ex) when (...1213...)`，這個 catch 永遠不會命中——這正是「先實測再寫程式碼」在本專案第二次抓到與預期不符的例外形狀（第一次是 v1.4 的死結成因本身）。
+3. **新增**（§7.3）：Status 列表補上 `409 TRANSIENT_CONFLICT`（可重試）。
+4. **新增測試**：`UnitOfWorkTests` 新增一個案例，比照既有 `DuplicateBookingException` 測試的手法（反射建構真實 `MySqlException`，因為它的建構子全是 non-public），驗證 `MySqlException{ErrorCode=LockDeadlock}` 包在 `DbUpdateException` 又包在 `InvalidOperationException` 的三層結構下，`UnitOfWork.SaveChangesAsync()` 能正確轉譯成 `TransientConflictException`；同時驗證這個新 catch 不會誤吃既有的 `DuplicateBookingException`/`ConcurrencyConflictException` 情境（兩兩互斥的例外型別，天生不會搶到彼此，不靠攔截順序維持互斥）。
+
+#### 附註（v1.5）：`EnableRetryOnFailure()` 刻意保持關閉
+
+**[Decision — 使用者補充]**
+
+原因：本專案的併發衝突處理（樂觀鎖 retry、未來 v2 的 bounded retry）都需要業務邏輯層級介入（重新讀取最新資料再判斷），EF Core 的 `EnableRetryOnFailure()` 是機械式重跑整個 transaction，不會重新讀取資料，兩者若同時啟用會導致 retry 次數不可控、且可能用過期資料重試。v2 設計 retry 時維持只在 Application 層手寫，不開啟此開關。
+
+此限制同時併入 §12 第 7 項 (d) 的待決範圍，作為 v2 設計 retry 時的既定限制條件。
+
+---
+
 ---
 
 ## 1. 專案目標與 MVP 範圍
@@ -303,8 +344,11 @@ Controller 只做四件事：
 |---|---|---|
 | `DbUpdateConcurrencyException` | `schedule_slots` 的 `UPDATE ... WHERE version = ?` 影響列數為 0 | `CONCURRENCY_CONFLICT`（409，可重試） |
 | `DbUpdateException`（inner exception 為 MySQL duplicate entry，違反的 key 是 `ux_appt_slot_active_patient`） | `appointments` INSERT 撞到 partial-unique index（同病人重複預約同一 slot） | `DUPLICATE_BOOKING`（409，不可重試） |
+| `InvalidOperationException`（**注意型別，非 `DbUpdateException`**；inner exception 鏈為 `DbUpdateException` → `MySqlException{ErrorCode=LockDeadlock}`，見 §0 v1.5） | InnoDB 偵測到鎖的循環等待，主動犧牲其中一個交易（MySQL error 1213） | `TRANSIENT_CONFLICT`（409，可重試） |
 
 判斷 `DbUpdateException` 具體違反哪一個 unique key，需要解析 inner `MySqlException` 的錯誤訊息或 constraint 名稱；這段解析邏輯應封裝在 Infrastructure 層（例如一個 `MySqlExceptionTranslator`），Application/Api 層不可直接對例外訊息做字串比對。
+
+> **[Decision — 新增，2026-09-21，見 §0 v1.5]** 第三列的 `InvalidOperationException` 型別是實測結果，不是預期或文件推導——死結原本預期會跟第二列一樣是 `DbUpdateException`，但因為 Booking 是在顯式交易（`ExecuteInTransactionAsync`，見 §0 v1.4）裡呼叫 `SaveChangesAsync`，EF Core 的 `ExecutionStrategy` 偵測到例外看似 transient（死結在 `ShouldRetryOn` 清單內）、又處於使用者自管的交易中且未設定 `EnableRetryOnFailure()`，判定無法安全地自動重試，於是把原始例外包成 `InvalidOperationException` 往外丟。用一組與 booking 無關、刻意設計成兩個 slot 相反鎖定順序的對照實驗重現 5 次真實死結，5 次的例外形狀完全一致。這代表：若沿用「只攔 `DbUpdateException`」的直覺寫法，這個 catch 永遠不會命中，死結會繼續以未對映例外外洩成 500——即使成因（S→X 鎖升級）已在 v1.4 修掉，往後任何新的死結情境都不會被這裡接住。
 
 ### 5.3 Cancel Flow
 
@@ -483,7 +527,7 @@ Status: `200`（無資料回空陣列，非 404）／`400 VALIDATION_FAILED`（�
 Request: `{ "slotId": 42 }`（**無 `patientId` 欄位，一律取自 JWT**）
 Response 201: `{ appointmentId, slotId, patientId, status, bookedAtUtc }` + `Location` header
 
-Status: `201`／`400 VALIDATION_FAILED`／`401`／`404 SLOT_NOT_FOUND`／`409 SLOT_FULL`（不可重試）／`409 CONCURRENCY_CONFLICT`（可重試）／`409 DUPLICATE_BOOKING`／`409 SLOT_NOT_BOOKABLE`。
+Status: `201`／`400 VALIDATION_FAILED`／`401`／`404 SLOT_NOT_FOUND`／`409 SLOT_FULL`（不可重試）／`409 CONCURRENCY_CONFLICT`（可重試）／`409 TRANSIENT_CONFLICT`（可重試，見 §0 v1.5）／`409 DUPLICATE_BOOKING`／`409 SLOT_NOT_BOOKABLE`。
 
 **[Decision]**：MVP 不做完整 `Idempotency-Key` 機制，靠 `(slot_id, active_patient_id)` 唯一索引提供天然的部分冪等性（同病人重送只會拿到 409 DUPLICATE_BOOKING，不會產生兩筆）。完整 Idempotency-Key + Redis 記錄回應列為後續擴充（見 §12）。
 
@@ -549,6 +593,25 @@ Domain Unit Test（~25個，無 I/O）
 5. **回應中不可出現任何 5xx**
 6. 成功者的 `patientId` 互不重複
 7. 每個 409 回應帶正確的 `errorCode`
+
+> **[Decision — 適用範圍修正，2026-09-18，見 §0 v1.4]**
+>
+> 上方清單**原文保留，未刪除**。經 Phase 1c 實測，其中 **第 2 條與第 4 條僅適用於「已啟用 retry」的版本（v2）**，在本文件同時要求的「第一版不啟用 retry」前提下**不成立**，且與實作是否正確無關：50 個請求同時讀到同一個 `version`，CAS 每輪至多一個贏家，填滿 5 個名額必須跑 5 輪 = retry。實測（5 輪）成功數落在 2～3 之間且本質非確定性。
+>
+> **v1（無 retry）採用的斷言**：
+> 1. `BookedCount <= Capacity`（不超賣）
+> 2. 成功數 `>= 1`（不因過度保守而全數拒絕）且 `<= Capacity`
+> 3. `BookedCount == 實際回報的成功數`（回應與 DB 一致）
+> 4. `COUNT(active appointments) == BookedCount`（兩表無 drift）
+> 5. 無任何非預期例外外洩（1c 直接呼叫 Handler，不經 HTTP，故第 5 條的「不可出現 5xx」在此層轉化為此條）
+> 6. 成功者的 `patientId` 互不重複
+> 7. 每個失敗都帶 `SLOT_FULL` 或 `CONCURRENCY_CONFLICT`，不得有第三種
+>
+> 第 1、3、5、6、7 條（原編號）不受此修正影響。v2 加入 retry 後，第 2、4 條原文即恢復適用，屆時應直接斷言 `== min(N, Capacity)`。
+>
+> **v1 實際保證是什麼（一句話版本）**：不超賣、資料庫狀態內部自洽（`schedule_slots.booked_count` 與 `appointments` 表中 `Status == Booked` 的筆數永遠一致，無論最終賣出幾個）、無任何非預期例外外洩；**但不保證吞吐量精確等於 Capacity**——同一瞬間爆發的 N 個請求，v1 只保證其中有人贏、贏家互不衝突、輸家全部乾淨失敗，不保證贏家數量湊滿 Capacity。
+>
+> **v2 待辦**：若之後加入 bounded retry（見 §12 第 7 項，已升為最高優先），屆時應回來更新本節，把斷言重新收緊為精確 `== min(N, Capacity)`。
 
 實作要點：
 - 用 50 個**不同病人**（同一人會先被唯一索引擋下，測不到樂觀鎖）
@@ -681,19 +744,19 @@ Domain Unit Test（~25個，無 I/O）
 
 以下項目**尚未決定**，或雖有預設方向但**必須先實測驗證**才能視為定案，實作時不應假設它們已成立：
 
-1. **[Deferred Decision — 最高優先]** Pomelo 的 `IsConcurrencyToken()` + MySQL 受影響列數行為，特別是連線字串 `UseAffectedRows` 設定對 EF 併發偵測的實際影響。
+1. ~~**[Deferred Decision — 最高優先]** Pomelo 的 `IsConcurrencyToken()` + MySQL 受影響列數行為，特別是連線字串 `UseAffectedRows` 設定對 EF 併發偵測的實際影響。~~ **[驗證通過，見 §0 v1.4]** 1c 用 Testcontainers 真實 MySQL 8.0.39 實測：`IsConcurrencyToken()` 確實產生 `UPDATE ... WHERE id = ? AND version = ?`，衝突時正確拋出 `DbUpdateConcurrencyException` 並被 `UnitOfWork` 轉譯為 `ConcurrencyConflictException`（預設連線字串下無須額外設定 `UseAffectedRows`）。反向驗證亦完成：以 mutation testing 拿掉 `.IsConcurrencyToken()` 後，50 個併發請求**全數成功**造成超賣，招牌測試如預期紅燈——證明這道防線確實是唯一擋住超賣的機制，而非巧合。
 2. ~~**[Deferred Decision]** 實際使用的 MySQL 版本是否 ≥ 8.0.16（影響 `CHECK` constraint 是否真的被強制執行）。~~ **[驗證通過，見 §0 v1.2]** 1b 用 Docker MySQL 8.0.39 實測，`CHECK` constraint 確認生效（違規 INSERT 被擋下並回傳 Error 3819）。
 3. ~~**[Deferred Decision]** Pomelo 是否支援 `HasComputedColumnSql(..., stored: true)` 映射 generated column，以及 migration 產出是否正確。~~ **[驗證通過，並發現新限制，見 §0 v1.2]** 1b 已用真實 MySQL 驗證 generated column 行為正確；另發現「FK 若被 STORED generated column 依賴的欄位參照，不可用 `ON DELETE CASCADE`」的 MySQL 限制，非本項原始問題範圍但一併記錄。
 4. **[Deferred Decision]** `DateTime`/`DateTimeOffset` 在 Pomelo 上對 `DATETIME(6)` 的實際映射與往返精度。
 5. ~~**[Deferred Decision]** MediatR 目前版本的授權條款細節，以及是否改用替代方案（`Mediator`、Wolverine、DI+Scrutor）。~~ **[已決策，見 §0 v1.3]** 釘住 `MediatR` v12.5.0（Apache 2.0，最後一版免費授權），不採用 v13+ 商業版，不改用替代方案。
-6. **[Deferred Decision]** `WebApplicationFactory` + `Task.WhenAll` 是否能產生真正的並行請求（而非被排程成近似循序）——需在撰寫併發測試時驗證。
-7. **[Deferred Decision]** Retry 機制的具體實作方式與導入時機（§9.5）。
+6. ~~**[Deferred Decision]** `WebApplicationFactory` + `Task.WhenAll` 是否能產生真正的並行請求（而非被排程成近似循序）——需在撰寫併發測試時驗證。~~ **[部分驗證，見 §0 v1.4]** 1c 尚未經過 HTTP／`WebApplicationFactory`（直接以 `IServiceScopeFactory` + `IMediator` 呼叫 Handler），但 `Task.Run` + `TaskCompletionSource` 閘門確認能產生**真正的並行**：未修正死結前 50 個請求中有 47 個互相死結，這種程度的鎖競爭不可能由近似循序的排程產生。`WebApplicationFactory` 那一層仍待 1d 驗證。
+7. **[Deferred Decision — 2026-09-18 升為最高優先，見 §0 v1.4]** Retry 機制的具體實作方式與導入時機（§9.5）。1c 實測確立了這不再只是「加值項目」——**§8.5 的 `BookedCount == min(N, Capacity)` 必須有 retry 才可能成立**，無 retry 時一次爆發只賣得掉 2～3 個名額（capacity=5、50 人併發）。使用者已明確要求此項單獨決策、不得順著死結修正一併倉促做掉。待決的子問題至少包含：(a) 重試幾次、退避策略為何；(b) 只對 InnoDB 死結重試，還是也對 `ConcurrencyConflictException` 重試（兩者語意不同：死結是 DB 主動犧牲、衝突是業務層面的搶輸）；(c) retry 是否會讓某些請求因排隊順序而系統性地更容易搶到，造成**公平性**問題；(d) retry 應放在哪一層——**已有既定限制，見 §0 v1.5**：`EnableRetryOnFailure()` 排除在選項外，不只是因為與現行顯式交易衝突（§0 v1.4），更根本的原因是它機械式重跑整個 transaction、不會重新讀取資料，會讓 retry 用過期快照重送；v2 的 retry 邏輯必須寫在 Application 層（例如 MediatR pipeline behavior 或 Handler 內迴圈），每次重試前重新 `GetByIdAsync()`。
 8. **[Deferred Decision]** JWT 撤銷機制的最終方案（refresh token / denylist / token_version）（§9.7）。
 9. **[Deferred Decision]** 完整 Idempotency-Key 機制的導入時機與實作方式（§7.3）。
 10. **[Deferred Decision]** Application 層是否允許依賴 `EFCore.Abstractions`（§4.2）。
 11. **[Deferred Decision]** 對外 `public_id`（防 id 枚舉）是否導入，及導入時機（§6.3）。
 12. **[Deferred Decision]** `TIMESTAMP`/`Pomelo .IsRowVersion()` 是否在未來版本變得可靠，值得重新評估（目前决定不採用，見 §6.2 Alternative）。
-13. **[Deferred Decision — 最高優先，2026-09-05 新增]** `SaveChangesAsync` 部分寫入 / rollback 驗證：同一次 `SaveChangesAsync` 中若某筆 UPDATE（如 `schedule_slots`）因 optimistic concurrency 檢查失敗（影響列數為 0），是否保證整個 implicit transaction 完全 rollback，不會有其他語句（如 `appointments` 的 INSERT）被誤留下來部分提交。這與第 1 項不同：第 1 項驗證「EF 有沒有正確偵測到衝突」，本項驗證「偵測到之後，其他已送出但邏輯上應一併作廢的語句會不會被錯誤保留」。必須用 Testcontainers 真實 MySQL 驗證，不可假設；對應測試見 §8.5。
+13. ~~**[Deferred Decision — 最高優先，2026-09-05 新增]** `SaveChangesAsync` 部分寫入 / rollback 驗證：同一次 `SaveChangesAsync` 中若某筆 UPDATE（如 `schedule_slots`）因 optimistic concurrency 檢查失敗（影響列數為 0），是否保證整個 implicit transaction 完全 rollback，不會有其他語句（如 `appointments` 的 INSERT）被誤留下來部分提交。這與第 1 項不同：第 1 項驗證「EF 有沒有正確偵測到衝突」，本項驗證「偵測到之後，其他已送出但邏輯上應一併作廢的語句會不會被錯誤保留」。必須用 Testcontainers 真實 MySQL 驗證，不可假設；對應測試見 §8.5。~~ **[驗證通過，見 §0 v1.4]** 1c 新增 `BookingTransactionRollbackTests` 專門驗證此項。因死結修正已把 Booking 改為「同一筆顯式交易內兩次 `SaveChangesAsync`」，本項的風險面比原始描述更大（現在是「UPDATE 已成功提交送出、INSERT 才失敗」），測試以重複預約重現該視窗，實測確認整筆交易完整回滾：`booked_count` 與 `version` 皆停在前一次的值，`appointments` 筆數不變，兩表無 drift。反向驗證亦完成：以 mutation testing 移除顯式交易後，實測出現 `booked_count=2` 但 `appointments=1` 的 drift，測試如預期紅燈。
 14. **[Deferred Decision，2026-09-05 新增]** 取消時間窗（cancellation window，例如「看診前 N 小時內不可取消」）機制是否要做、規則為何。此前曾短暫出現於 §7.4 的 `CANCELLATION_WINDOW_CLOSED` 狀態碼已移除（因 §3.5 從未定義對應規則），MVP 不實作；若未來要做，需先在 §3.5 補上 Domain Invariant，並解決 `Appointment.Cancel()` 需要跨 aggregate 讀取 `ScheduleSlot` 時間的設計問題。
 15. **[Deferred Decision，2026-09-05 新增]** `users.role = Admin` 的實際用途與對應 endpoint 尚未設計。MVP 僅保留欄位與 enum 值（因 `role` 本身被 §7.3 的 Patient-only authorization 使用），但沒有任何 Admin-only 功能；不得在程式碼中提前假設 Admin 已有意義。
 
