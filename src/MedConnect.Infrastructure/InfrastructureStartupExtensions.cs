@@ -1,3 +1,4 @@
+using MedConnect.Application.Abstractions;
 using MedConnect.Infrastructure.Persistence;
 using MedConnect.Infrastructure.Persistence.Seed;
 using Microsoft.EntityFrameworkCore;
@@ -32,7 +33,8 @@ public static class InfrastructureStartupExtensions
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MedConnectDbContext>();
         var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
-        await DatabaseSeeder.SeedAsync(db, timeProvider, cancellationToken);
+        var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+        await DatabaseSeeder.SeedAsync(db, timeProvider, passwordHasher, cancellationToken);
     }
 
     /// <summary>

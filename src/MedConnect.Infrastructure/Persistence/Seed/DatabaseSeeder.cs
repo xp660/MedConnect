@@ -1,3 +1,4 @@
+using MedConnect.Application.Abstractions;
 using MedConnect.Domain.Entities;
 using MedConnect.Domain.Enums;
 using MedConnect.Domain.ValueObjects;
@@ -10,7 +11,16 @@ namespace MedConnect.Infrastructure.Persistence.Seed;
 /// </summary>
 public static class DatabaseSeeder
 {
-    public static async Task SeedAsync(MedConnectDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken = default)
+    /// <summary>
+    /// 1d 手動測試登入用的固定測試帳密：test-patient@medconnect.local / Test1234!
+    /// </summary>
+    public const string TestPatientPassword = "Test1234!";
+
+    public static async Task SeedAsync(
+        MedConnectDbContext db,
+        TimeProvider timeProvider,
+        IPasswordHasher passwordHasher,
+        CancellationToken cancellationToken = default)
     {
         if (await db.Doctors.AnyAsync(cancellationToken))
         {
@@ -41,10 +51,10 @@ public static class DatabaseSeeder
         db.ScheduleSlots.AddRange(slots);
         await db.SaveChangesAsync(cancellationToken);
 
-        // 1c 手動測試訂位流程用的固定病人：1c 還沒有 Login/JWT（1d 才做），沒有其他管道能產生
-        // Patient。PasswordHash 只是滿足 users 表的 NOT NULL 約束，不是真的雜湊密碼，1d 接上真正
-        // 的密碼雜湊機制前，這個帳號不能、也不應該被拿來登入。
-        var testUser = new User("test-patient@medconnect.local", "not-a-real-password-hash", UserRole.Patient, now);
+        // 1c 手動測試訂位流程用的固定病人。1d 接上真正的密碼雜湊機制後，改用 IPasswordHasher
+        // 算出真實的 BCrypt hash，讓這個帳號可以拿來手動測試 POST /api/v1/auth/login
+        // （帳密見 TestPatientPassword 常數：test-patient@medconnect.local / Test1234!）。
+        var testUser = new User("test-patient@medconnect.local", passwordHasher.Hash(TestPatientPassword), UserRole.Patient, now);
         db.Users.Add(testUser);
         await db.SaveChangesAsync(cancellationToken);
 

@@ -101,3 +101,10 @@
 
   全測試回歸：Domain 23（不變）／Application 4（不變）／**Infrastructure 5→7**（新增兩個死結轉譯測試）／Integration 2（不變）。50 vs 5 併發測試重跑 3 輪，行為與修正前完全一致（成功 2、失敗 48、DB 自洽、死結率仍是 0）——符合預期：這輪修正的是「萬一死結發生時的錯誤處理」，不改變死結發生的機率。
 - 2026-09-22：使用者補充 v1.5 的一項設計限制並已記入 architecture-plan.md（§0 v1.5 第 5 項、§12 第 7 項 (d)）：`EnableRetryOnFailure()` 刻意維持關閉，且此限制延伸到 v2——v2 的 retry 必須寫在 Application 層、每次重試前重新讀取資料，不能用 EF Core 這個機械式重跑整個 transaction、不重新讀資料的內建開關（否則會與手寫 retry 疊加、且可能用過期快照重試）。純文件補充，未動程式碼，未跑測試。
+- 2026-09-25：進行 1d 的 Login/JWT 手動驗證時，發現本機環境已知缺口——尚未修正，記錄現象供之後處理：
+
+  **現象**：`docker ps` 顯示本機執行中的 `medconnect-mysql-1` 容器對外連接埠是 `0.0.0.0:13306->3306`，但 `src/MedConnect.Api/appsettings.Development.json` 的 `ConnectionStrings:MedConnect` 寫的是 `Port=3306`。若直接 `dotnet run` 不覆寫連線字串，會連不上這個容器（3306 無人監聽）。手動驗證 Login 時是用環境變數 `ConnectionStrings__MedConnect`（指向 13306）暫時覆寫過去，未修改任何已提交的檔案。
+
+  **可能成因**（尚未實際查證，僅為推測）：`docker-compose.yml` 的埠對應寫的是 `"${MYSQL_PORT:-3306}:3306"`，代表這個容器極可能是在某次帶有 `MYSQL_PORT=13306` 環境變數的 shell（例如本機另一個常駐 3306 的服務、或先前手動除錯時暫時改過）下啟動的；容器本身持續執行超過一週（`CREATED 9 days ago`），時間上早於這次 1d 工作。目前的 shell session 並未設定 `MYSQL_PORT`，代表這個對應是啟動當下決定的，事後改 `.env`/環境變數不會回溯影響已存在的容器，需要 `docker compose down` 再 `up` 才會套用新值。
+
+  **這次刻意不處理的原因**：不確定使用者是否依賴 13306（例如另一個服務占用了本機 3306），貿然 `docker compose down`/改連線字串屬於會影響本機環境設定的動作，超出這次 Login/JWT 任務範圍，留給使用者決定要固定用 13306（改 `appsettings.Development.json`）還是換回 3306（重建容器）。

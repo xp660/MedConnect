@@ -2,6 +2,7 @@ using MedConnect.Application.Abstractions;
 using MedConnect.Infrastructure.Persistence;
 using MedConnect.Infrastructure.Persistence.Interceptors;
 using MedConnect.Infrastructure.Persistence.Repositories;
+using MedConnect.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,7 +28,17 @@ public static class DependencyInjection
 
         services.AddScoped<IScheduleSlotRepository, ScheduleSlotRepository>();
         services.AddScoped<IAppointmentRepository, AppointmentRepository>();
+        services.AddScoped<IUserRepository, UserRepository>();
+        services.AddScoped<IPatientRepository, PatientRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
+
+        services.AddScoped<IPasswordHasher, BCryptPasswordHasher>();
+        services.AddScoped<ITokenService, JwtTokenService>();
+
+        services.AddOptions<JwtOptions>()
+            .Bind(configuration.GetSection(JwtOptions.SectionName))
+            .Validate(o => !string.IsNullOrWhiteSpace(o.SecretKey), "Missing Jwt:SecretKey configuration (use `dotnet user-secrets set Jwt:SecretKey ...`).")
+            .ValidateOnStart();
 
         return services;
     }

@@ -22,6 +22,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             ConcurrencyConflictException => (StatusCodes.Status409Conflict, "CONCURRENCY_CONFLICT"),
             TransientConflictException => (StatusCodes.Status409Conflict, "TRANSIENT_CONFLICT"),
             DuplicateBookingException => (StatusCodes.Status409Conflict, "DUPLICATE_BOOKING"),
+            InvalidCredentialsException => (StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS"),
             _ => (0, string.Empty)
         };
 
