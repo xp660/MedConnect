@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.2" />
     <PackageReference Include="FluentAssertions" Version="8.10.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="9.0.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" Version="9.0.5" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
     <PackageReference Include="Microsoft.Extensions.Configuration" Version="9.0.5" />
@@ -29,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MedConnect.Application\MedConnect.Application.csproj" />
     <ProjectReference Include="..\..\src\MedConnect.Infrastructure\MedConnect.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\MedConnect.Api\MedConnect.Api.csproj" />
   </ItemGroup>
 
 </Project>
