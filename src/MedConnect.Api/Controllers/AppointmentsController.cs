@@ -1,6 +1,7 @@
 using MediatR;
 using MedConnect.Api.Contracts.Appointments;
 using MedConnect.Application.Appointments.Commands.BookAppointment;
+using MedConnect.Application.Common.Auth;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -21,13 +22,10 @@ public sealed class AppointmentsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Book([FromBody] BookAppointmentRequest request, CancellationToken cancellationToken)
     {
-        // "patient_id" 是 JwtTokenService（Infrastructure/Security/JwtTokenService.cs）簽發時
-        // 用的字面 claim 名稱，兩邊必須手動保持一致——這裡故意不建一個只有兩處使用的共用常數
-        // （architecture-plan.md §9.1：說不出解決什麼問題就不加）。
-        // 通過 [Authorize] 驗證的 Token 理論上不可能缺這個 claim；如果真的缺了，
-        // 這是預期外的異常，不吞成業務例外，讓它自然拋出。
-        var patientIdClaim = User.FindFirst("patient_id")?.Value
-            ?? throw new InvalidOperationException("Authenticated request is missing the required 'patient_id' claim.");
+        // 通過 [Authorize] 驗證的 Token 理論上不可能缺 JwtClaimNames.PatientId 這個 claim；
+        // 如果真的缺了，這是預期外的異常，不吞成業務例外，讓它自然拋出。
+        var patientIdClaim = User.FindFirst(JwtClaimNames.PatientId)?.Value
+            ?? throw new InvalidOperationException($"Authenticated request is missing the required '{JwtClaimNames.PatientId}' claim.");
         var patientId = long.Parse(patientIdClaim);
 
         var command = new BookAppointmentCommand(patientId, request.SlotId);

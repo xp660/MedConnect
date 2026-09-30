@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using MedConnect.Application.Abstractions;
+using MedConnect.Application.Common.Auth;
 using MedConnect.Domain.Entities;
 using MedConnect.Domain.Enums;
 using MedConnect.Infrastructure.Persistence;
@@ -122,7 +123,7 @@ public sealed class JwtAuthenticationTests : IClassFixture<ApiWebApplicationFact
         var claims = new[]
         {
             new Claim(JwtRegisteredClaimNames.Sub, "1"),
-            new Claim("patient_id", patientId.ToString()),
+            new Claim(JwtClaimNames.PatientId, patientId.ToString()),
             new Claim(ClaimTypes.Role, UserRole.Patient.ToString()),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
