@@ -39,7 +39,9 @@ public class LoginHandlerTests
 
         await act.Should().ThrowAsync<InvalidCredentialsException>()
             .WithMessage("Invalid email or password.");
-        _passwordHasher.DidNotReceive().Verify(Arg.Any<string>(), Arg.Any<string>());
+        // 刻意斷言「有」呼叫 Verify：帳號不存在時仍要對一組假雜湊值跑一次真正的 BCrypt
+        // Verify，讓耗時跟「帳號存在但密碼錯」的路徑一致，避免用回應時間差推測帳號是否存在。
+        _passwordHasher.Received(1).Verify(command.Password, Arg.Any<string>());
         _tokenService.DidNotReceive().GenerateToken(Arg.Any<User>(), Arg.Any<long>());
     }
 

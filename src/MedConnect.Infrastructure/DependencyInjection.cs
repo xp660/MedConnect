@@ -38,6 +38,8 @@ public static class DependencyInjection
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection(JwtOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.SecretKey), "Missing Jwt:SecretKey configuration (use `dotnet user-secrets set Jwt:SecretKey ...`).")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.Issuer), "Missing Jwt:Issuer configuration.")
+            .Validate(o => !string.IsNullOrWhiteSpace(o.Audience), "Missing Jwt:Audience configuration.")
             .ValidateOnStart();
 
         return services;

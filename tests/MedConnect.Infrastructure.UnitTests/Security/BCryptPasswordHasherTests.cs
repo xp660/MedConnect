@@ -34,4 +34,16 @@ public class BCryptPasswordHasherTests
 
         _hasher.Verify("WrongPassword!", hash).Should().BeFalse();
     }
+
+    [Fact]
+    public void Verify_WithMalformedHash_ReturnsFalseInsteadOfThrowing()
+    {
+        // 回歸測試：資料庫裡存的雜湊值格式不合法（例如殘留的舊 placeholder 字串）時，
+        // 底層 EnhancedVerify 會丟 SaltParseException。呼叫端不該收到未預期的例外，
+        // 必須跟「密碼錯」回傳同一種結果（false），最終才會對外變成同一種 401。
+        var act = () => _hasher.Verify("Test1234!", "not-a-real-password-hash");
+
+        act.Should().NotThrow();
+        act().Should().BeFalse();
+    }
 }
