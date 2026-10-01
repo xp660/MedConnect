@@ -16,6 +16,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
         var (statusCode, errorCode) = exception switch
         {
             ScheduleSlotNotFoundException => (StatusCodes.Status404NotFound, "SLOT_NOT_FOUND"),
+            DoctorNotFoundException => (StatusCodes.Status404NotFound, "DOCTOR_NOT_FOUND"),
             SlotFullException => (StatusCodes.Status409Conflict, "SLOT_FULL"),
             SlotClosedException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),
             SlotInPastException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),

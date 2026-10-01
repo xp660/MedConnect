@@ -99,6 +99,15 @@ v1.4 修掉了死結的**成因**（S→X 鎖升級），但沒有替死結補�
 
 此限制同時併入 §12 第 7 項 (d) 的待決範圍，作為 v2 設計 retry 時的既定限制條件。
 
+### v1.6 — 2026-10-01：Schedule Query（第一個 CQRS Query-side 切片）實作前，與 §7.2 原文的落差
+
+Schedule Query 開始實作前，使用者直接給出與 §7.2 原文不同的設計，當場確認定案。依 §7 版本保留規則，§7.2 原文不覆寫，差異記錄如下：
+
+1. **Route / 回應形狀改變**：§7.2 原文是 `GET /api/v1/doctors/{doctorId}/slots?from=...&to=...`，回傳 `PagedResult<SlotDto>`（含分頁）。實際採用 `GET /api/v1/schedule-slots?doctorId={id}&date={date}`——**單一日期查詢**，不支援日期範圍，也**不分頁**，直接回傳 `List<ScheduleSlotDto>`。原因：MVP 範圍，日期範圍查詢與分頁目前沒有實際消費者。
+2. **DTO 欄位改變**：`ScheduleSlotDto(Id, DoctorId, StartUtc, Capacity, AvailableCount, Status)`——拿掉原文的 `doctorName`、`bookedCount`。不含 `doctorName` 的前提假設：前端查詢流程會先自己取得醫生清單，這個端點只需要回傳時段資訊；`bookedCount` 改用 `AvailableCount`（`Capacity - BookedCount`），避免對外暴露內部計算用的原始欄位。
+3. **保留明確的 `404 DOCTOR_NOT_FOUND`**：與原文一致（原文本來就有這條），但特別強調不可退化成「查無資料一律回空陣列」——`doctorId` 不存在（404）與「該 doctorId 當天沒有時段」（200 + 空陣列）必須是呼叫端可分辨的兩種不同結果。實作：新增 `IDoctorRepository.ExistsAsync()`（最小化介面，目前只有這一個方法）+ `DoctorNotFoundException`，對映模式比照既有的 `ScheduleSlotNotFoundException` → `404 SLOT_NOT_FOUND`。
+4. **§4.2 Deferred Decision 的落地**：§4.2 原本把「Application 是否依賴 `Microsoft.EntityFrameworkCore.Abstractions`」列為待決，預設傾向「`IReadDbContext` 介面隔離的嚴格版本」。本次查詢切片具體採用的做法是：新增 `IScheduleSlotQueryRepository`（`Application/Abstractions`），方法簽章直接回傳 `Task<List<ScheduleSlotDto>>`（DTO，不是 `IQueryable`、也不是 Domain Entity），Infrastructure 內部用 EF Core LINQ 投影（`Select` + `AsNoTracking()`）實作。即：**不**讓 Application 依賴 EF Core Abstractions，走比「`IReadDbContext`」更嚴格的「repository 直接回傳 DTO」版本。與既有的 `IScheduleSlotRepository`（寫入用，回傳/操作 Domain Entity）刻意分成兩個介面，放在同一個 `Abstractions/` 資料夾，不額外分子資料夾。
+
 ---
 
 ---
