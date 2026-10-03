@@ -2,15 +2,14 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
-using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using MedConnect.Application.Abstractions;
-using MedConnect.Application.Common.Auth;
 using MedConnect.Domain.Entities;
 using MedConnect.Domain.Enums;
 using MedConnect.Infrastructure.Persistence;
+using MedConnect.Infrastructure.Security;
 using MedConnect.IntegrationTests.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -120,13 +119,8 @@ public sealed class JwtAuthenticationTests : IClassFixture<ApiWebApplicationFact
 
     private static string CreateToken(long patientId, DateTime notBefore, DateTime expires, string? signingKey = null)
     {
-        var claims = new[]
-        {
-            new Claim(JwtRegisteredClaimNames.Sub, "1"),
-            new Claim(JwtClaimNames.PatientId, patientId.ToString()),
-            new Claim(ClaimTypes.Role, UserRole.Patient.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-        };
+        // claims 的結構跟簽發端共用同一個組裝方法；這個 helper 只自己負責「偽造簽章密鑰與有效期」。
+        var claims = JwtClaimsBuilder.BuildClaims(userId: 1, patientId, UserRole.Patient);
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey ?? ApiWebApplicationFactory.SigningKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

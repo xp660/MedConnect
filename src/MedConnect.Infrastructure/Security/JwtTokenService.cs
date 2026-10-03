@@ -1,8 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
-using System.Security.Claims;
 using System.Text;
 using MedConnect.Application.Abstractions;
-using MedConnect.Application.Common.Auth;
 using MedConnect.Domain.Entities;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -10,9 +8,9 @@ using Microsoft.IdentityModel.Tokens;
 namespace MedConnect.Infrastructure.Security;
 
 /// <summary>
-/// architecture-plan.md §7.1：payload 至少含 sub、patient_id、role、jti、exp。
-/// 只做簽發，不做驗證——驗證 middleware 是下一步（1d 的後半段），刻意不在這裡引入
-/// Microsoft.AspNetCore.Authentication.JwtBearer。
+/// architecture-plan.md §7.1：只負責簽發。payload 的 claims 組裝見 JwtClaimsBuilder。
+/// 驗證不在這裡：Api 的 JwtBearer 驗證（Program.cs）與這裡共用同一份 JwtOptions，
+/// 所以 Infrastructure 刻意不引用 Microsoft.AspNetCore.Authentication.JwtBearer。
 /// </summary>
 public sealed class JwtTokenService : ITokenService
 {
@@ -30,13 +28,7 @@ public sealed class JwtTokenService : ITokenService
         var now = _timeProvider.GetUtcNow();
         var expiresAt = now.AddMinutes(_options.ExpiryMinutes);
 
-        var claims = new[]
-        {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtClaimNames.PatientId, patientId.ToString()),
-            new Claim(ClaimTypes.Role, user.Role.ToString()),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-        };
+        var claims = JwtClaimsBuilder.BuildClaims(user.Id, patientId, user.Role);
 
         var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
         var credentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
