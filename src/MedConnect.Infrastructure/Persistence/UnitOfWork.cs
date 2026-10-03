@@ -53,6 +53,8 @@ public sealed class UnitOfWork : IUnitOfWork
         }
     }
 
+    public void ResetTracking() => _dbContext.ChangeTracker.Clear();
+
     /// <summary>
     /// 交易的邊界只在這裡：operation 全部跑完才 Commit。中途任何例外都會讓
     /// transaction 在 await using 的 dispose 時未提交地結束，InnoDB 整筆回滾——

@@ -207,6 +207,7 @@ public class CancelAppointmentTests
     {
         const int rounds = 5;
         const int concurrentCancels = 10;
+        var exhaustedTotal = 0;
 
         for (var round = 1; round <= rounds; round++)
         {
@@ -239,6 +240,13 @@ public class CancelAppointmentTests
                     {
                         return "CONCURRENCY_CONFLICT";
                     }
+                    // v2 retry 之後的第三種預期內失敗：重試用盡仍衝突。輸家正常會在重試時讀到最新資料而得到
+                    // ALREADY_CANCELLED，所以這個值理論上少見（實測目前 0 次），但它是合法的 409，不是 bug；
+                    // 不接的話一旦出現就會讓整個測試以未處理例外崩潰（§0 v1.9 第 9 項）。
+                    catch (RetryExhaustedException)
+                    {
+                        return "RETRY_EXHAUSTED";
+                    }
                 }))
                 .ToArray();
 
@@ -249,11 +257,18 @@ public class CancelAppointmentTests
             var state = await ReadStateAsync(slotId, targetAppointmentId);
             _output.WriteLine($"round {round}: {summary}; final booked_count={state.Slot.BookedCount} active_appointments={state.ActiveAppointments}");
 
+            exhaustedTotal += outcomes.Count(o => o == "RETRY_EXHAUSTED");
+
             outcomes.Count(o => o == "SUCCESS").Should().Be(1, $"round {round}: 同一筆預約只能被成功取消一次");
             state.Slot.BookedCount.Should().Be(2, $"round {round}: 3 筆預約取消 1 筆，名額只能釋放一次（不可 double-release）");
             state.ActiveAppointments.Should().Be(state.Slot.BookedCount, $"round {round}: 兩表不可 drift");
             state.Appointment.Status.Should().Be(AppointmentStatus.Cancelled);
         }
+
+        // 健康指標（只印出、不斷言）：與 ConcurrentBookingTests 相同，供人工檢視 RETRY_EXHAUSTED 的趨勢。
+        var totalRequests = rounds * concurrentCancels;
+        _output.WriteLine(
+            $"[health] RETRY_EXHAUSTED={exhaustedTotal}/{totalRequests} ({(double)exhaustedTotal / totalRequests:P1})");
     }
 
     // ---------- helpers ----------

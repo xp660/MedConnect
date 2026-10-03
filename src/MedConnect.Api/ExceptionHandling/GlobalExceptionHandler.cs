@@ -23,6 +23,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             SlotInPastException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),
             ConcurrencyConflictException => (StatusCodes.Status409Conflict, "CONCURRENCY_CONFLICT"),
             TransientConflictException => (StatusCodes.Status409Conflict, "TRANSIENT_CONFLICT"),
+            RetryExhaustedException => (StatusCodes.Status409Conflict, "RETRY_EXHAUSTED"),
             DuplicateBookingException => (StatusCodes.Status409Conflict, "DUPLICATE_BOOKING"),
             InvalidCredentialsException => (StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS"),
             RequestValidationException => (StatusCodes.Status400BadRequest, ApiProblemDetails.ValidationFailedErrorCode),

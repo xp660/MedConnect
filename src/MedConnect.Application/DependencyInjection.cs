@@ -3,6 +3,7 @@ using MediatR;
 using MedConnect.Application.Common.Behaviors;
 using MedConnect.Application.Common.Validation;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace MedConnect.Application;
 
@@ -20,8 +21,13 @@ public static class DependencyInjection
             // architecture-plan.md §5.1 規劃的順序是 Logging → Validation → Performance；
             // 目前只有 Validation，Logging / Performance 留到 1e（Serilog / OpenTelemetry），
             // 屆時依序加在它的前後即可。
+            // Validation 在外層、Retry 在內層：不合法的輸入不該進入重試迴圈（architecture-plan.md §0 v1.9）。
             cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+            cfg.AddOpenBehavior(typeof(RetryBehavior<,>));
         });
+
+        // TryAdd：讓測試能在 AddApplication() 之前先註冊自己的 RetryOptions（例如把延遲設為 0）。
+        services.TryAddSingleton(new RetryOptions());
 
         AddRequestValidators(services, assembly);
 

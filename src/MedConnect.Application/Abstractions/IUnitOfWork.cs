@@ -8,6 +8,17 @@ public interface IUnitOfWork
     Task SaveChangesAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// 丟掉目前 scope 內 DbContext 追蹤的所有實體，讓下一次讀取一定打到資料庫。
+    ///
+    /// 為什麼需要它（architecture-plan.md §0 v1.9）：RetryBehavior 與它包住的 Handler 共用同一個
+    /// Scoped DbContext。EF Core 的 change tracker 對「已追蹤過的主鍵」會直接回傳記憶體裡那個舊物件、
+    /// 不會用資料庫的新資料覆蓋，所以重試時 Handler 再 GetByIdAsync() 拿到的還是第一次的舊快照
+    /// （舊的 BookedCount、舊的 Version），同樣的衝突會原樣重演。Cancel 更糟：第一次 flush 成功、
+    /// 第二次失敗時，交易雖然已回滾，記憶體中的 slot 卻已被 Release() 過、version 也已被推進。
+    /// </summary>
+    void ResetTracking();
+
+    /// <summary>
     /// 讓呼叫端能表達「這幾次 SaveChanges 屬於同一筆交易」，藉此控制語句送出的順序。
     ///
     /// 為什麼需要它（architecture-plan.md §0 v1.4）：Booking 一次會寫兩張表，

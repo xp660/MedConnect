@@ -136,6 +136,27 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
 7. **JWT claims 組裝共用（實作細節，無架構變更）**：`JwtClaimsBuilder.BuildClaims` 放在 Infrastructure（`JwtRegisteredClaimNames` 來自只有 Infrastructure 引用的 JWT 套件，§4.2），簽發端與測試的 token 偽造 helper 共用同一份 claims 結構。
 8. **已知、刻意延後（1e）**：`ExceptionHandlerMiddleware` 目前會把已對映的業務例外（404 / 409 / 現在還有 400）以 error level 記 log；驗證失敗是使用者輸入問題，不該是 error，留到 1e 的 Logging 一併處理。
 
+### v1.9 — 2026-10-03：v2 bounded retry（MediatR `RetryBehavior`）落地（§9.5、§12 第 7 項、§8.5）
+
+§12 第 7 項（Retry 機制）經一次獨立的 Architect Mode 討論後定案並實作。依 §7 版本保留規則，§9.5、§8.5、§7.3 原文不覆寫，差異與實測記錄如下：
+
+1. **[Decision] Retry 放在 MediatR Pipeline Behavior，而非 Handler 內迴圈。** 與 §9.5 [Deferred Decision] 原文的差異：§9.5 寫「放在最外層（非 MediatR behavior 內以避免同一 scoped DbContext 重放）」，但 §12 第 7 項 (d)（v1.5 補充）已把 pipeline behavior 列為可選方案，本輪採用之，並以 `IUnitOfWork.ResetTracking()` 直接解決 §9.5 擔心的「同一 scoped DbContext 重放」問題。**[Alternative]（已比較但不採用）**：每次嘗試開新 DI scope 重新解析 Handler——Behavior 內無法乾淨地做到（behavior 與 handler 已在同一個 scope 解析完成）。註冊順序：`ValidationBehavior`（外）→ `RetryBehavior`（內），不合法的輸入不進入重試迴圈。
+2. **[Decision] `IUnitOfWork.ResetTracking()` = `DbContext.ChangeTracker.Clear()`，RetryBehavior 在每次重試前（延遲之後）呼叫。** Application 層不依賴 `DbContext`。**Change Tracker 風險已用真實 MySQL 實測證明，非僅憑分析**：先加空實作，測試（`RetryTrackingTests`）紅燈——同一 scope 內重讀拿到的是同一個過期物件（`BookedCount=0`、`Version=0`，而資料庫已是 1、1）；改成 `ChangeTracker.Clear()` 後綠燈。端到端 mutation（`RetryPipelineTests`，拿掉 RetryBehavior 內的 `ResetTracking()` 呼叫）：4 個測試中 3 個紅燈——Booking 重試以 `RetryExhaustedException` 失敗（陳舊 version 每次都衝突）；Booking 的 SLOT_FULL 測試因沒有走到重試後的重讀而紅；**Cancel 紅燈的方式最值得記錄**：第一次 flush 成功、第二次衝突後，記憶體中的 appointment 已被 `Cancel()` 標為已取消，沒有 reset 的重試會讀到這個髒實體，丟出**假的** `AppointmentAlreadyCancelledException`（資料庫其實仍是 Booked）。
+3. **[Decision] 只重試 `ConcurrencyConflictException` 與 `TransientConflictException`**；`SlotFullException`、`DuplicateBookingException`、`AppointmentAlreadyCancelledException` 等業務結果、以及任何未預期例外一律不重試、原樣往外丟。重試後重新讀到「已滿」會自然以 `SLOT_FULL` 結束（有測試）。
+4. **[Decision] 參數**：最多重試 3 次（總嘗試 4 次）；延遲 `baseDelay × (attempt + 1) + Random(0, jitterRange)`（`attempt` 從 0 起算，線性、非指數退避），`baseDelay = 25ms`、`jitterRange = 50ms`（第 1/2/3 次重試分別為 25–75 / 50–100 / 75–125ms）。參數放在 `RetryOptions`（單一用途：讓測試把延遲設成 0）。
+5. **[Decision] 耗盡後丟 `RetryExhaustedException`（Application 層，InnerException 保留最後一次的原始例外），對映 `409 RETRY_EXHAUSTED`**——獨立的 errorCode，不沿用 `CONCURRENCY_CONFLICT`。理由：v1.5 刻意把死結與樂觀鎖衝突分成兩種 errorCode，耗盡時若統一成 `CONCURRENCY_CONFLICT` 會悄悄抹掉這個區分，且客戶端無從得知「系統已經重試過仍失敗」。（§7.3 的狀態碼列表原文保留，`RETRY_EXHAUSTED` 以本條為準。）
+6. **實測：50 人搶 Capacity=5（同一個測試 `ConcurrentBookingDistributionTests`，20 輪，前後同條件對比）**：
+   - **無 retry**：1 成功 × 10 輪、2 成功 × 10 輪，平均 **1.50**，0 輪填滿；失敗全為 `CONCURRENCY_CONFLICT`（970 個）。
+   - **有 retry（預設參數）**：連跑 3 次共 60 輪，**60 輪全部恰為 5 成功**（平均 5.00，每輪 `booked_count == active_appointments == 5`，無超賣、無 drift）。失敗原因：`SLOT_FULL` 為主，另有少量 `RETRY_EXHAUSTED`（每 20 輪／1000 個請求中 3、24、10 個）。**值得注意**：這些 `RETRY_EXHAUSTED` 的請求在重試用盡時，名額其實常已被搶完——它們若再多讀一次本應得到 `SLOT_FULL`；客戶端拿到的是「已重試仍衝突」而非「已滿」，兩者都是 409，但語意不同。
+7. **Cancel 與 retry 的交互作用（已驗證）**：Cancel 的雙階段 flush 在 `RetryBehavior` 內行為正確——`RetryPipelineTests` 刻意製造「第一次 flush（`schedule_slots`）成功、第二次 flush（`appointments`）才衝突」，實測交易整筆回滾，重試後 `booked_count` 只釋放一次（3→2）、slot `version` 3→4（失敗那次沒有留下痕跡）、兩表無 drift。**併發 Cancel 的輸家結果改變**：原本（v1.7 第 5 項）輸家得到 `CONCURRENCY_CONFLICT`，現在重試時重新讀到最新資料，輸家得到 `ALREADY_CANCELLED`（15 輪 × 10 個請求實測：每輪皆為 1 SUCCESS + 9 ALREADY_CANCELLED，0 RETRY_EXHAUSTED）——對客戶端是更準確的結果。
+8. **ValidationBehavior 不被 retry 包住**：以真實 pipeline 驗證，不合法請求 validator 只執行一次、Handler 與交易完全沒被呼叫、`ResetTracking` 0 次；DI 註冊順序另有單元測試鎖住。
+9. **[Decision] 既有測試的處理（已與使用者確認）**：
+   - **`RETRY_EXHAUSTED` 是新的「正常失敗型態」**：`ConcurrentBookingTests`（§8.5 招牌測試）與併發 Cancel 測試原本只 catch `SlotFullException` / `ConcurrencyConflictException`，`RetryExhaustedException` 逃出去會讓整個測試以未處理例外崩潰——實測招牌測試連跑 6 次有 1 次因此變紅。兩個測試都已把 `RETRY_EXHAUSTED` 加進預期內的失敗清單（其餘例外仍故意不接，避免偽裝成普通併發失敗）。
+   - **健康指標（只印出、不當失敗條件）**：兩個測試與 `ConcurrentBookingDistributionTests` 都會印出 `[health] RETRY_EXHAUSTED=n/總請求數 (比例)`，供人工檢視趨勢。實測波動很大：招牌測試連跑 30 次，多數為 0/50，偶發 2～5/50，兩次離群值達 17/50（34%）與 36/50（72%）——**即使如此那幾次的成功數仍恰為 5**（耗盡的是名額已被搶完後的輸家）。此數字長期上升代表重試參數（次數／延遲／jitter）或鎖競爭需要檢視。
+   - **§8.5 第 2、4 條不收緊成 `== min(N, Capacity)`**：改為**下限斷言 `>= Capacity - 1`**（`ConcurrentBookingTests`）。理由：有界重試下精確值斷言會是 flaky test；60 輪全為 5 是機率證據、不是保證，`RETRY_EXHAUSTED` 的存在本身就說明了這一點。`ConcurrentBookingDistributionTests` 只印出每輪分佈與耗盡次數，不斷言成功數。§8.5 原文不覆寫。
+   - **實測（調整後）**：`ConcurrentBookingTests` 連跑 15 次 15 次通過；併發 Cancel 測試連跑 8 次 8 次通過、`RETRY_EXHAUSTED` 0 次。
+10. **未解決**：§12 第 7 項 (c)（公平性：重試是否讓某些請求系統性地更容易搶到）本輪**未量測**。
+
 ---
 
 ---

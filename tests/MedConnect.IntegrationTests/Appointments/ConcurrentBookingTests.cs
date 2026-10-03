@@ -20,17 +20,19 @@ namespace MedConnect.IntegrationTests.Appointments;
 /// 為什麼一定要「不同」病人：同一個病人重複送會先撞上 ux_appt_slot_active_patient 唯一索引，
 /// 拿到的是 DUPLICATE_BOOKING，根本走不到樂觀鎖那一步，等於沒測到要測的東西。
 ///
-/// 第一版刻意不做 retry（§8.5）。這裡要特別講清楚 v1 的正確期望值是什麼：
+/// v2（有 bounded retry，architecture-plan.md §0 v1.9）的斷言說明：
 ///
-/// §8.5 原本寫「BookedCount == min(N, Capacity)」，也就是 50 人搶 5 個名額應該恰好賣出 5 個。
-/// 實測證明在「不啟用 retry」的前提下這個數字達不到，而且不是實作有 bug——50 個請求在同一
-/// 瞬間都讀到 version = 0，樂觀鎖的 CAS 每一輪只可能有一個贏家，要填滿 5 個位子需要 5 輪，
-/// 而「5 輪」就是 retry。兩條 [Decision] 在物理上互斥。經討論後 v1 的斷言改成「至少賣出 1 個、
-/// 且絕不超賣、且兩表完全一致」，把 min(N, Capacity) 留到 v2 真的加了 retry 之後再斷言。
-/// 詳見 architecture-plan.md §0 v1.4 與 §8.5（v1 適用範圍）。
+/// §8.5 原文要求 BookedCount == min(N, Capacity)。v1（無 retry）達不到（實測 1～3 個，見 §0 v1.4），
+/// v2 加了 RetryBehavior 後 60 輪實測全為 5——但那是機率證據、不是保證：有界重試（3 次）下，
+/// 一個請求仍可能連輸 4 輪而以 RETRY_EXHAUSTED 收場，所以精確值斷言會是 flaky test。
+/// 經決策（§0 v1.9 第 9 項）：**不收緊成 == 5，改斷言下限 >= Capacity - 1**，並把實際成功數與
+/// RETRY_EXHAUSTED 的次數／比例印出來，作為持續觀察的健康指標（趨勢給人看，不當作失敗條件）。
 ///
-/// 所以這個測試證明的是：**不會超賣、不會有 partial commit、不會有非預期例外**，
-/// 而不是「一定賣得掉 5 個」。
+/// RETRY_EXHAUSTED 是新的「正常失敗型態」：重試用盡仍衝突，是預期內的 409，不是 bug，所以和
+/// SLOT_FULL / CONCURRENCY_CONFLICT 一樣被 catch 成資料。其餘任何例外仍故意不接。
+///
+/// 所以這個測試證明的是：**不會超賣、不會有 partial commit、不會有非預期例外、不會過度保守
+/// （成功數 >= Capacity - 1）**，而不是「一定賣得掉 5 個」。
 /// </summary>
 [Collection(MySqlContainerCollection.Name)]
 public class ConcurrentBookingTests
@@ -89,6 +91,10 @@ public class ConcurrentBookingTests
                 {
                     return new BookingAttemptResult(patientId, Success: false, ErrorCode: "CONCURRENCY_CONFLICT");
                 }
+                catch (RetryExhaustedException)
+                {
+                    return new BookingAttemptResult(patientId, Success: false, ErrorCode: "RETRY_EXHAUSTED");
+                }
             }))
             .ToArray();
 
@@ -106,14 +112,22 @@ public class ConcurrentBookingTests
             _output.WriteLine($"  {group.Key}: {group.Count()}");
         }
 
+        // 健康指標（只印出、不斷言）：RETRY_EXHAUSTED 的次數與佔總請求的比例。
+        // 長期趨勢上升代表重試參數（次數／延遲／jitter）或鎖競爭出了問題，值得人工檢視。
+        var exhausted = failed.Count(r => r.ErrorCode == "RETRY_EXHAUSTED");
+        _output.WriteLine(
+            $"[health] RETRY_EXHAUSTED={exhausted}/{results.Length} ({(double)exhausted / results.Length:P1})");
+
         // 沒有請求被憑空遺漏或重複計算：50 個 Task 進去，50 個結果出來，
         // 每個結果不是成功就是失敗，兩者互斥、合起來剛好覆蓋全部。
         results.Should().HaveCount(ConcurrentPatients, "每個請求都必須回報結果，不能有人默默消失");
         (succeeded.Length + failed.Length).Should().Be(ConcurrentPatients,
             "成功與失敗互斥且窮盡，不能有請求被重複計算或遺漏");
 
-        // v1（無 retry）的期望值：至少有人買到、但絕不超賣，不斷言恰好 5——理由見 class 註解。
-        succeeded.Should().NotBeEmpty("至少要有一個人搶到，全部失敗代表實作過度保守");
+        // v2（有 bounded retry）的期望值：不超賣，且幾乎填滿；不斷言恰好 5——理由見 class 註解。
+        // 下限用 Capacity - 1：有界重試不保證必然填滿，但退到 4 以下代表重試機制或鎖定順序出了問題。
+        succeeded.Should().HaveCountGreaterThanOrEqualTo(SlotCapacity - 1,
+            "有 retry 時成功數應接近 Capacity；遠低於它代表重試沒有發揮作用或過度保守");
         succeeded.Should().HaveCountLessThanOrEqualTo(SlotCapacity, "成功數不可能超過 capacity，超過就是超賣");
 
         // 死結（MySqlError 1213）目前完全沒有被 UnitOfWork.SaveChangesAsync 攔截、轉譯
@@ -124,8 +138,8 @@ public class ConcurrentBookingTests
         // 測試在跑到這裡之前就已經紅燈，不會被這條斷言悄悄吞掉、也不會偽裝成第三種 errorCode。
         // 換句話說：底下這條斷言能執行到，本身就代表這一輪測試裡沒有任何一個死結漏網。
         failed.Should().OnlyContain(
-            r => r.ErrorCode == "SLOT_FULL" || r.ErrorCode == "CONCURRENCY_CONFLICT",
-            "失敗只能來自這兩個已知原因；出現別的代表有非預期的失敗路徑");
+            r => r.ErrorCode == "SLOT_FULL" || r.ErrorCode == "CONCURRENCY_CONFLICT" || r.ErrorCode == "RETRY_EXHAUSTED",
+            "失敗只能來自這三個已知原因；出現別的代表有非預期的失敗路徑");
 
         succeeded.Select(r => r.PatientId).Should().OnlyHaveUniqueItems(
             "同一個病人不可能佔到兩個名額");

@@ -36,7 +36,9 @@
 - 留到 1e：Logging／Performance pipeline behaviors（§5.1 規劃的順序 Logging → Validation → Performance，目前只實作 Validation）；`ExceptionHandlerMiddleware` 對已對映的業務例外（404／409／400）以 error level 記 log 的問題。
 - 本階段的 Reviewer 檢視（Schedule Query／Cancel／Validation）與知識點教學總結（執行迴圈第 4、8 步）由使用者在本分頁之外另行處理，不在本分頁追蹤範圍。
 
-另外 architecture-plan.md §12 第 7 項（Retry 機制）仍須單獨用一次 Architect Mode 討論，不得順帶做掉；本機 MySQL 連接埠 3306 vs 13306 的不一致（見 2026-09-25 變更紀錄）依然未處理。
+**v2 bounded retry（2026-10-03，architecture-plan.md §0 v1.9）**：`RetryBehavior` + `IUnitOfWork.ResetTracking()` + `RETRY_EXHAUSTED` 已實作並實測（50 搶 5：無 retry 平均 1.50 → 有 retry 60 輪全為 5）。既有併發測試已處理 `RETRY_EXHAUSTED`（加入預期失敗清單＋健康指標輸出），§8.5 改下限斷言 `>= Capacity - 1`（見 §0 v1.9 第 9 項）。
+
+另外 architecture-plan.md §12 第 7 項（Retry 機制）已於 v1.9 實作（見上）；本機 MySQL 連接埠 3306 vs 13306 的不一致（見 2026-09-25 變更紀錄）依然未處理。
 
 ---
 
