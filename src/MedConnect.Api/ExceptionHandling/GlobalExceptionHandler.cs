@@ -1,7 +1,6 @@
 using MedConnect.Application.Common.Exceptions;
 using MedConnect.Domain.Exceptions;
 using Microsoft.AspNetCore.Diagnostics;
-using Microsoft.AspNetCore.Mvc;
 
 namespace MedConnect.Api.ExceptionHandling;
 
@@ -26,6 +25,7 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             TransientConflictException => (StatusCodes.Status409Conflict, "TRANSIENT_CONFLICT"),
             DuplicateBookingException => (StatusCodes.Status409Conflict, "DUPLICATE_BOOKING"),
             InvalidCredentialsException => (StatusCodes.Status401Unauthorized, "INVALID_CREDENTIALS"),
+            RequestValidationException => (StatusCodes.Status400BadRequest, ApiProblemDetails.ValidationFailedErrorCode),
             _ => (0, string.Empty)
         };
 
@@ -36,18 +36,17 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             return false;
         }
 
-        var problemDetails = new ProblemDetails
-        {
-            Status = statusCode,
-            Title = errorCode,
-            Detail = exception.Message,
-        };
-        problemDetails.Extensions["errorCode"] = errorCode;
-        problemDetails.Extensions["traceId"] = httpContext.TraceIdentifier;
+        var problemDetails = exception is RequestValidationException validationException
+            ? ApiProblemDetails.CreateValidationFailed(httpContext, statusCode, ApiProblemDetails.ToErrors(validationException.Errors))
+            : ApiProblemDetails.Create(httpContext, statusCode, errorCode, exception.Message);
 
         httpContext.Response.StatusCode = statusCode;
-        httpContext.Response.ContentType = "application/problem+json";
-        await httpContext.Response.WriteAsJsonAsync(problemDetails, cancellationToken);
+
+        // contentType 必須直接傳給 WriteAsJsonAsync：它會無條件把 Content-Type 覆寫成 application/json，
+        // 先設 Response.ContentType 沒有用（本檔案舊版就是這樣，實際回的一直是 application/json，
+        // 與 §7 規定的 application/problem+json 不符）。
+        await httpContext.Response.WriteAsJsonAsync(
+            problemDetails, options: null, contentType: ApiProblemDetails.ContentType, cancellationToken);
 
         return true;
     }

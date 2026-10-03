@@ -12,7 +12,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        // model binding 失敗（doctorId=abc、JSON 格式錯誤…）預設會回一個沒有 errorCode 的 400，
+        // 跟 ValidationBehavior 產生的 400 形狀不同；統一走 ApiProblemDetails。
+        options.InvalidModelStateResponseFactory = ApiProblemDetails.FromInvalidModelState;
+    });
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 

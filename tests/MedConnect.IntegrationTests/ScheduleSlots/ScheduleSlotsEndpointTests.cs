@@ -54,6 +54,7 @@ public sealed class ScheduleSlotsEndpointTests : IClassFixture<ApiWebApplication
         var response = await client.GetAsync("/api/v1/schedule-slots?doctorId=999999&date=2026-10-05");
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        response.ShouldBeProblemJson();
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
         body.GetProperty("errorCode").GetString().Should().Be("DOCTOR_NOT_FOUND");
     }

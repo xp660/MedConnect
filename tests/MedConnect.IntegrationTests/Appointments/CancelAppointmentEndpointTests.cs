@@ -53,6 +53,7 @@ public sealed class CancelAppointmentEndpointTests : IClassFixture<ApiWebApplica
         var second = await client.PostAsync($"/api/v1/appointments/{appointmentId}/cancel", content: null);
 
         second.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        second.ShouldBeProblemJson();
         var problem = await second.Content.ReadFromJsonAsync<JsonElement>();
         problem.GetProperty("errorCode").GetString().Should().Be("ALREADY_CANCELLED");
     }
@@ -70,6 +71,8 @@ public sealed class CancelAppointmentEndpointTests : IClassFixture<ApiWebApplica
         // 防 Enumeration：呼叫端從狀態碼與 errorCode 完全無法分辨「存在但不是你的」與「根本不存在」。
         notYours.StatusCode.Should().Be(HttpStatusCode.NotFound);
         missing.StatusCode.Should().Be(HttpStatusCode.NotFound);
+        notYours.ShouldBeProblemJson();
+        missing.ShouldBeProblemJson();
         var notYoursBody = await notYours.Content.ReadFromJsonAsync<JsonElement>();
         var missingBody = await missing.Content.ReadFromJsonAsync<JsonElement>();
         notYoursBody.GetProperty("errorCode").GetString().Should().Be("APPOINTMENT_NOT_FOUND");
