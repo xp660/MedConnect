@@ -20,18 +20,12 @@ namespace MedConnect.IntegrationTests.Infrastructure;
 /// </summary>
 public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>, IAsyncLifetime
 {
-    private const string MySqlImage = "mysql:8.0.39";
-
     // 僅供本測試類別內簽發「合法」與「簽名錯誤」的比對用 token，不是任何環境的真實密鑰。
     public const string SigningKey = "integration-test-only-signing-key-never-used-elsewhere-32bytes-min";
     public const string Issuer = "MedConnect.IntegrationTests";
     public const string Audience = "MedConnect.IntegrationTests.Api";
 
-    private readonly MySqlContainer _container = new MySqlBuilder(MySqlImage)
-        .WithDatabase("medconnect")
-        .WithUsername("medconnect")
-        .WithPassword("medconnect")
-        .Build();
+    private readonly MySqlContainer _container = MySqlTestContainer.Create();
 
     public Task InitializeAsync() => _container.StartAsync();
 

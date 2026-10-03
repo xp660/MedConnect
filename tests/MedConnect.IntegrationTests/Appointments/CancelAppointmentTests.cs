@@ -26,9 +26,9 @@ namespace MedConnect.IntegrationTests.Appointments;
 [Collection(MySqlContainerCollection.Name)]
 public class CancelAppointmentTests
 {
-    // MySqlContainerFixture 用 .WithPassword("medconnect")，Testcontainers 會把同一組密碼也設成 root 密碼。
+    // 容器的密碼來自 MySqlTestContainer，Testcontainers 會把同一組密碼也設成 root 密碼。
     // 建 trigger 與開 general log 需要 root 權限（binlog 開啟時建 trigger 要 SUPER）。
-    private const string RootPassword = "medconnect";
+    private const string RootPassword = MySqlTestContainer.Password;
 
     // SIGNAL SQLSTATE '45000' 的 MySQL error number（ER_SIGNAL_EXCEPTION）。
     private const int SignalExceptionErrorNumber = 1644;

@@ -20,15 +20,7 @@ namespace MedConnect.IntegrationTests.Infrastructure;
 /// </summary>
 public sealed class MySqlContainerFixture : IAsyncLifetime
 {
-    // §8.6：固定 image tag，避免 latest 造成 flaky；與 docker-compose.yml 用同一個版本，
-    // 確保「手動測到的行為」跟「自動測到的行為」是同一個 MySQL 版本的行為。
-    private const string MySqlImage = "mysql:8.0.39";
-
-    private readonly MySqlContainer _container = new MySqlBuilder(MySqlImage)
-        .WithDatabase("medconnect")
-        .WithUsername("medconnect")
-        .WithPassword("medconnect")
-        .Build();
+    private readonly MySqlContainer _container = MySqlTestContainer.Create();
 
     private ServiceProvider? _serviceProvider;
 
