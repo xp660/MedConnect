@@ -4,7 +4,7 @@ using MedConnect.Application.Common.Exceptions;
 
 namespace MedConnect.Application.Auth.Commands.Login;
 
-public sealed class LoginHandler : IRequestHandler<LoginCommand, LoginResult>
+public sealed class LoginHandler : IRequestHandler<LoginCommand, GeneratedToken>
 {
     // 帳號不存在時比對用的假雜湊值，只在第一次用到時透過 IPasswordHasher 算出來並快取。
     // 用 static + `??=` 而非 lock：就算多個請求同時撞到還沒算好的第一次、各自算出一份
@@ -29,7 +29,7 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, LoginResult>
         _tokenService = tokenService;
     }
 
-    public async Task<LoginResult> Handle(LoginCommand request, CancellationToken cancellationToken)
+    public async Task<GeneratedToken> Handle(LoginCommand request, CancellationToken cancellationToken)
     {
         var user = await _userRepository.GetByEmailAsync(request.Email, cancellationToken);
 
@@ -53,8 +53,6 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, LoginResult>
         var patient = await _patientRepository.GetByUserIdAsync(user.Id, cancellationToken)
             ?? throw new InvalidOperationException($"User {user.Id} has no associated Patient record.");
 
-        var token = _tokenService.GenerateToken(user, patient.Id);
-
-        return new LoginResult(token.AccessToken, token.ExpiresInSeconds);
+        return _tokenService.GenerateToken(user, patient.Id);
     }
 }
