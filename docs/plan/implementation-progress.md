@@ -16,7 +16,7 @@
 - [x] 1a 骨架（commit `246fed4`：4 專案＋DI 組裝＋docker-compose(MySQL)＋health check，`dotnet run` 可起、`/health` 回 200）
 - [x] 1b Domain + DB（commit `e35614e`：ScheduleSlot/Appointment entity＋invariant＋18 個 Domain unit test 全綠＋EF 設定＋version interceptor＋migration＋seed；已用真實 Docker MySQL 8.0.39 驗證 migration 套用、CHECK constraint、generated column 皆如預期運作；獨立 blind review 抓到 6 項發現，5 項已修正，1 項（TimeSlot 用 Complex Type 而非文件寫的 owned type）與使用者確認後以 architecture-plan.md §0 v1.2 版本化更新處理）
 - [x] 1c 併發驗證（全案最重要里程碑）—— **Exit criteria 已達成**：Testcontainers 整合測試專案（`MedConnect.IntegrationTests`）＋ §8.5 招牌測試（50 個不同病人搶 Capacity=5）＋ 無 partial commit 專門測試，全部綠燈，5 輪共 250 個請求 0 死結、0 非預期例外、0 超賣、兩表 0 drift。過程中用真實 MySQL 抓到**兩項文件層級的錯誤假設**（InnoDB 死結未被 §5.2 涵蓋；§8.5 的 `min(N, Capacity)` 與「不啟用 retry」互斥），已依 §7 版本保留規則記入 architecture-plan.md §0 v1.4，未覆寫原文。斷言有效性以 mutation testing 反向驗證過，非「怎麼跑都會過」的假測試。
-- [ ] 1d 補齊 MVP —— **四支 API 的實作已全部完成，但階段尚未結案**（見下方「1d 剩餘事項」）
+- [x] 1d 補齊 MVP —— **Exit criteria 已達成**：四支 API（Login / Schedule Query / Concurrent Booking / Cancel Appointment）全部可用、整合測試綠燈。結案時刻意延後的項目見下方「1d 結案時刻意延後的項目」
   - [x] Login + Password Hashing + JWT 簽發（commit `8da411c`）
   - [x] JWT Bearer 驗證 middleware + 全域 FallbackPolicy（commit `6b62f84`）；`patient_id` claim 名稱抽成共用常數（commit `d345ef3`）
   - [x] Login/JWT/Middleware 子範圍的 Reviewer 檢視與 4 項修正（commit `a111423`）
@@ -24,16 +24,16 @@
   - [x] Cancel Appointment（commit `cdea1c5`，architecture-plan.md §0 v1.7）
   - [x] Validation Behavior + Pipeline Behavior 骨架 + `400 VALIDATION_FAILED`（commit `b4a9675`，architecture-plan.md §0 v1.8）
   - [x] JWT claims 組裝共用（`JwtClaimsBuilder.BuildClaims`）+ `JwtTokenService` 過時 XML 註解修正（commit `bacbf5a`）
+  - [x] Reviewer 檢視後到期的三項清理：移除重複的 `LoginResult`（commit `a111d7c`）；Login 兩次 DB round-trip 合併成單次 LEFT JOIN 並刪除變成死碼的 `IPatientRepository`（commit `bf6a297`）；兩個整合測試 fixture 的 Testcontainers 容器定義共用（commit `da972e1`）
 - [ ] 1e 加值
 
-目前全測試：Domain 25 + Application 53 + Infrastructure 14 + Integration 41 = **133 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
+目前全測試：Domain 25 + Application 54 + Infrastructure 14 + Integration 48 = **141 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
 
-1c 已完整完成。**1d 剩餘事項**（尚未做，故 1d 不勾選為完成）：
+1c、1d 已完整完成。**1d 結案時刻意延後的項目**（皆已記錄、不阻擋 1d 結案，不是遺漏）：
 
-- 仍待清理（Reviewer 檢視後決定「等 Schedule Query / Cancel 做完再一起清」的項目中，尚未處理的）：`LoginResult` 與 `GeneratedToken` 重複、Login 兩次 DB round-trip、`ApiWebApplicationFactory` 與 `MySqlContainerFixture` 的 Testcontainers 設定重複。（claims 建構重複與 `JwtTokenService` 過時 XML 註解已於 `bacbf5a` 處理。）
-- 已記錄、刻意延後的缺口：`role: Patient` 授權未強制（architecture-plan.md §7.3 要求 Booking 需 Patient 角色，目前只有 bare `[Authorize]`；Cancel 同樣沿用；目前沒有任何 Admin token 簽發機制，故尚無實際風險，留待 Admin 相關工作時處理）。
+- `role: Patient` 授權未強制：architecture-plan.md §7.3 要求 Booking 需 Patient 角色，目前只有 bare `[Authorize]`，Cancel 同樣沿用。目前沒有任何 Admin token 簽發機制，故尚無實際風險，留待 Admin 相關工作時處理（§12 第 15 項）。
 - §8.5 變體測試「Book/Cancel 混合負載」尚未做（「併發 Cancel」變體已於 Cancel 實作時完成）。
-- 已決定留到 1e：Logging／Performance pipeline behaviors（§5.1 規劃的順序 Logging → Validation → Performance，目前只實作 Validation）；`ExceptionHandlerMiddleware` 對已對映的業務例外（404／409／400）以 error level 記 log 的問題。
+- 留到 1e：Logging／Performance pipeline behaviors（§5.1 規劃的順序 Logging → Validation → Performance，目前只實作 Validation）；`ExceptionHandlerMiddleware` 對已對映的業務例外（404／409／400）以 error level 記 log 的問題。
 - 本階段的 Reviewer 檢視（Schedule Query／Cancel／Validation）與知識點教學總結（執行迴圈第 4、8 步）由使用者在本分頁之外另行處理，不在本分頁追蹤範圍。
 
 另外 architecture-plan.md §12 第 7 項（Retry 機制）仍須單獨用一次 Architect Mode 討論，不得順帶做掉；本機 MySQL 連接埠 3306 vs 13306 的不一致（見 2026-09-25 變更紀錄）依然未處理。
@@ -136,3 +136,8 @@
   - 過程中發現的既有 bug：被 `GlobalExceptionHandler` 對映的錯誤（404/409/401）實際一直回 `application/json` 而非 §7 規定的 `application/problem+json`（`WriteAsJsonAsync` 會覆寫先前設好的 Content-Type），而且**沒有任何測試斷言過 Content-Type**，所以長期沒被發現。已修正並補上嚴格斷言（過程中也發現自己寫的 `ContentType?.MediaType.Should()` 在 header 缺席時會悄悄跳過斷言，改用不會被 `?.` 跳過的 helper）。三個 mutation（移除 `AddOpenBehavior`、移除 binding 錯誤統一、還原舊的 content-type 寫法）都讓對應測試真的變紅。
   - JWT claims 組裝共用（`bacbf5a`）：`JwtClaimsBuilder.BuildClaims` 放 Infrastructure，簽發端與測試的 token 偽造 helper 共用；`JwtTokenService` 過時的 XML 註解一併修正。無行為變更。
   - 全測試 77 → 133（Application +33、Infrastructure +3、Integration +20），全綠。
+- 2026-10-03（續）：處理 Reviewer 檢視後到期的三項清理，1d 結案。三項各自獨立 commit、各自跑完整回歸，皆無架構層級決策變更，故未新增 architecture-plan.md 條目。
+  - 移除重複的 `LoginResult`（`a111d7c`）：它與 `GeneratedToken` 欄位完全相同。刪除方向是刻意的——反過來刪 `GeneratedToken` 會讓 Abstractions 的 `ITokenService` 依賴 Login 這個 feature 資料夾裡的型別，依賴方向反了。
+  - Login 合併成單次查詢（`bf6a297`）：`users` LEFT JOIN `patients`，回傳 `UserWithPatientId(User, long? PatientId)`，刪除變成死碼的 `IPatientRepository`。**硬性要求：維持「先驗證密碼、才檢查 PatientId」的順序**，否則不知道密碼的人能從 500 vs 401 分辨「有帳號但缺 Patient 記錄」，等於新增帳號枚舉管道；新增單元測試（密碼錯誤 + 缺 Patient 記錄必須仍是 `InvalidCredentials`）並在真實 MySQL + HTTP 上以 `LoginEndpointTests` 再驗證，兩者都經 mutation 驗證會紅燈（把 PatientId 檢查挪到密碼驗證之前：單元測試中唯一變紅的是這一個；真實 HTTP 測試出現 401 變 500）。用 MySQL server 端 general log 實測查詢次數（同一支暫時性 probe，改動前後各跑一次）：成功登入由 2 個 SELECT 降為 1 個。誠實說明：只有成功登入少一次 round-trip，MVP 規模下收益有限，主要好處是少一個 repository。過程中學到：EF Core 的 `AsNoTracking()` 是整個查詢的開關，只拿掉 join 其中一邊不會有差別——第一次 mutation 因此沒有變紅，改成兩處都移除後才證明追蹤測試真的抓得到。
+  - Testcontainers 容器定義共用（`da972e1`）：新增 `MySqlTestContainer`（image tag、資料庫名稱、帳號、密碼只有一份），只消除「定義」的重複，不合併容器——兩個 fixture 仍各自啟動自己的容器，避免不同層級的測試共用資料庫而互相干擾。
+  - 全測試 133 → 141（Application +1、Integration +7），全綠。
