@@ -22,18 +22,19 @@
   - [x] Login/JWT/Middleware 子範圍的 Reviewer 檢視與 4 項修正（commit `a111423`）
   - [x] Schedule Query（commit `b8adf12`，architecture-plan.md §0 v1.6）
   - [x] Cancel Appointment（commit `cdea1c5`，architecture-plan.md §0 v1.7）
+  - [x] Validation Behavior + Pipeline Behavior 骨架 + `400 VALIDATION_FAILED`（commit `b4a9675`，architecture-plan.md §0 v1.8）
+  - [x] JWT claims 組裝共用（`JwtClaimsBuilder.BuildClaims`）+ `JwtTokenService` 過時 XML 註解修正（commit `bacbf5a`）
 - [ ] 1e 加值
 
-目前全測試：Domain 25 + Application 20 + Infrastructure 11 + Integration 21 = **77 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
+目前全測試：Domain 25 + Application 53 + Infrastructure 14 + Integration 41 = **133 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
 
 1c 已完整完成。**1d 剩餘事項**（尚未做，故 1d 不勾選為完成）：
 
-- Schedule Query 與 Cancel Appointment 尚未經過 Reviewer 檢視（Login/JWT/Middleware 子範圍已檢視並修正過）。
-- Reviewer 檢視後決定「等 Schedule Query / Cancel 做完再一起清」的項目，現在到期：`LoginResult` 與 `GeneratedToken` 重複、Login 兩次 DB round-trip、`ApiWebApplicationFactory` 與 `MySqlContainerFixture` 的 Testcontainers 設定重複、`JwtAuthenticationTests.CreateToken` 與 `JwtTokenService` 的 claim 建構重複，另有 `JwtTokenService` 的 XML 註解仍寫著「驗證 middleware 是下一步」已過時。
+- 仍待清理（Reviewer 檢視後決定「等 Schedule Query / Cancel 做完再一起清」的項目中，尚未處理的）：`LoginResult` 與 `GeneratedToken` 重複、Login 兩次 DB round-trip、`ApiWebApplicationFactory` 與 `MySqlContainerFixture` 的 Testcontainers 設定重複。（claims 建構重複與 `JwtTokenService` 過時 XML 註解已於 `bacbf5a` 處理。）
 - 已記錄、刻意延後的缺口：`role: Patient` 授權未強制（architecture-plan.md §7.3 要求 Booking 需 Patient 角色，目前只有 bare `[Authorize]`；Cancel 同樣沿用；目前沒有任何 Admin token 簽發機制，故尚無實際風險，留待 Admin 相關工作時處理）。
-- 計畫文件有寫、但程式碼中**目前不存在**的項目（grep 驗證過）：§7.1–7.3 狀態碼表列出的 `400 VALIDATION_FAILED`，以及 §5.1 流程與 §9.2 所述的 MediatR pipeline behaviors（Logging／Validation／Performance）。需要使用者決定是在 1d 補上，還是明確移到 1e／降級。
 - §8.5 變體測試「Book/Cancel 混合負載」尚未做（「併發 Cancel」變體已於 Cancel 實作時完成）。
-- 本階段的知識點教學總結（執行迴圈第 8 步）尚未做。
+- 已決定留到 1e：Logging／Performance pipeline behaviors（§5.1 規劃的順序 Logging → Validation → Performance，目前只實作 Validation）；`ExceptionHandlerMiddleware` 對已對映的業務例外（404／409／400）以 error level 記 log 的問題。
+- 本階段的 Reviewer 檢視（Schedule Query／Cancel／Validation）與知識點教學總結（執行迴圈第 4、8 步）由使用者在本分頁之外另行處理，不在本分頁追蹤範圍。
 
 另外 architecture-plan.md §12 第 7 項（Retry 機制）仍須單獨用一次 Architect Mode 討論，不得順帶做掉；本機 MySQL 連接埠 3306 vs 13306 的不一致（見 2026-09-25 變更紀錄）依然未處理。
 
@@ -130,3 +131,8 @@
   - Schedule Query（`b8adf12`）：專案第一個 CQRS Query-side 切片，新的 Query Repository 模式（`IScheduleSlotQueryRepository` 回傳 DTO、兩段式 LINQ 投影確保純 SQL 執行 + `AsNoTracking()`）；與 §7.2 原文的差異（單日查詢、DTO 欄位、保留 404 `DOCTOR_NOT_FOUND`）與 §4.2 Deferred Decision 的落地記於 architecture-plan.md §0 v1.6。
   - Cancel Appointment（`cdea1c5`）：與 Booking 一致的鎖定順序（同一筆顯式交易內兩次 flush，先 `schedule_slots` 後 `appointments`），以 MySQL server 端 general log 與 mutation 實測確認「合併成單次 flush 會讓 EF 改先送 `UPDATE appointments`」；三種錯誤寫法（提早呼叫 `Cancel()`、合併 flush、拿掉顯式交易）都經 mutation 驗證會讓對應測試真的變紅；5 輪 × 10 併發取消同一筆預約，每輪恰 1 成功、名額只釋放一次、無死結。詳細記於 architecture-plan.md §0 v1.7（含與 §5.3 單一 SaveChanges 描述的差異）。
   - 本機 MySQL 連接埠 3306 vs 13306 的不一致仍未處理，手動驗證仍以環境變數 `ConnectionStrings__MedConnect` 暫時覆寫。
+- 2026-10-03（續）：補上計畫文件列出、但程式碼中原本不存在的 `400 VALIDATION_FAILED` 與 Validation pipeline behavior，並清掉兩項到期的清理項目。
+  - Validation Behavior + Pipeline Behavior 骨架（`b4a9675`，architecture-plan.md §0 v1.8）：手寫驗證（不引入 FluentValidation）、validator 只檢查結構絕不查資料庫（防 Enumeration 邏輯不拆成兩處）、`AddOpenBehavior` 註冊且慣例為「註冊順序 = 由外而內」。400 的兩個來源（ValidationBehavior 與 `[ApiController]` model binding 失敗）統一成同一種形狀。**先用 characterization 測試在未修改的程式碼上記錄實際回應，再實作，再以同一組輸入重跑**：19 個 case 中 16 個依預期改變（非正數 id 404→400、缺 `date` 的靜默 `200 []`→400、Login 空欄位 401→400），3 個不變。
+  - 過程中發現的既有 bug：被 `GlobalExceptionHandler` 對映的錯誤（404/409/401）實際一直回 `application/json` 而非 §7 規定的 `application/problem+json`（`WriteAsJsonAsync` 會覆寫先前設好的 Content-Type），而且**沒有任何測試斷言過 Content-Type**，所以長期沒被發現。已修正並補上嚴格斷言（過程中也發現自己寫的 `ContentType?.MediaType.Should()` 在 header 缺席時會悄悄跳過斷言，改用不會被 `?.` 跳過的 helper）。三個 mutation（移除 `AddOpenBehavior`、移除 binding 錯誤統一、還原舊的 content-type 寫法）都讓對應測試真的變紅。
+  - JWT claims 組裝共用（`bacbf5a`）：`JwtClaimsBuilder.BuildClaims` 放 Infrastructure，簽發端與測試的 token 偽造 helper 共用；`JwtTokenService` 過時的 XML 註解一併修正。無行為變更。
+  - 全測試 77 → 133（Application +33、Infrastructure +3、Integration +20），全綠。

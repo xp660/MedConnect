@@ -123,6 +123,19 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
 5. **§8.5 [Decision] 變體測試「併發 Cancel（同一 appointment）恰好一個成功」已完成**：5 輪 × 10 個併發請求取消同一筆預約（slot 上另有 2 筆其他預約，使 double-release 可被偵測），每輪皆為「1 成功 + 9 `CONCURRENCY_CONFLICT`」，`booked_count` 恰好只釋放一次（3 → 2），兩表無 drift，無死結（`TransientConflictException` 一旦出現會讓測試直接崩潰）。輸家得到的是 `CONCURRENCY_CONFLICT`（可重試，重試後才會看到 `ALREADY_CANCELLED`），而非直接 `ALREADY_CANCELLED`——因為併發下兩者都通過了記憶體內的 pre-check，真正的裁決者是 slot／appointment 各自的 version 檢查。**§8.5 的另一個變體「Book/Cancel 混合負載」尚未做**，留待獨立處理。
 6. **Cancel 的 atomicity 驗證（比照 §12 第 13 項對 Booking 的驗證方式，等級只高不低）**：用臨時 MySQL trigger 強制 Cancel 的第二次 UPDATE（`appointments`）必然失敗，第一次 UPDATE（`schedule_slots`）則先成功，重現「第一次 flush 已成功、第二次才失敗」的危險視窗，實測整筆交易完整回滾（`booked_count`、兩列的 `version`、`status` 皆不變）。反向驗證（mutation）：移除顯式交易後，測試如預期紅燈，實測出現 `booked_count` 歸零但 `Appointment.Status` 仍為 `Booked` 的 drift。
 
+### v1.8 — 2026-10-03：Validation Behavior 與 `400 VALIDATION_FAILED` 落地（§5.1、§7、§9.2、§9.8）
+
+§7 的狀態碼表從 Login 到 Cancel 都列了 `400 VALIDATION_FAILED`，§5.1 也把 Validation 列為 MediatR pipeline 的一環，但 1d 實作完四支 API 後，程式碼裡兩者都不存在（以 grep 確認，不是印象）。本輪補上。依 §7 版本保留規則，§5.1、§7 原文不覆寫，記錄如下：
+
+1. **[Decision] 手寫驗證，不引入 FluentValidation。** 目前的規則（必填、長度上限、id > 0）簡單到不需要新套件；每個新套件都必須能用一句話說明解決了什麼問題（§9.1）。介面是 `IRequestValidator<TRequest>`，validator 與其 request 放在同一個資料夾，由 `AddApplication()` 以組件掃描自動註冊（約十行 reflection，不為此引入 Scrutor）。**[Alternative]（已比較但不採用）**：FluentValidation——規則變複雜（跨欄位條件、非同步檢查、大量規則）時再評估升級，屆時 `IRequestValidator` 可以被取代而不影響 Handler。
+2. **[Decision] Validator 只檢查結構，絕不查資料庫。** 必填、長度、數值範圍可以；「這筆資料存不存在、是不是你的」不行，那屬於 Handler。理由：防 Enumeration 的邏輯（Login 帳號不存在與密碼錯誤收斂成同一例外、Cancel 的「不存在」與「不是你的」收斂成同一例外）必須只活在 Handler 一處，驗證與存在性判斷若拆在兩處，規則就會散落、容易被其中一處破壞。Login 因此刻意不檢查 email 格式。
+3. **[Decision] Pipeline Behavior 的範圍只有 `ValidationBehavior`。** §5.1 規劃的順序是 Logging → Validation → Performance，這裡只實作 Validation，並以 `AddOpenBehavior` 註冊，慣例是「註冊順序 = 由外而內的執行順序」，Logging / Performance 留到 1e（Serilog / OpenTelemetry），屆時加在它的前後即可。驗證失敗以 `RequestValidationException` 表達，由 `GlobalExceptionHandler` 對映，與 §9.8 的 Exception 模式一致（Result pattern 仍是 [Deferred Decision]）；Handler 在驗證失敗時完全不會被呼叫，不會開交易、不會拿鎖。
+4. **`400 VALIDATION_FAILED` 的回應合約**：`application/problem+json`，含 `errorCode`、`traceId`，以及一個 §7 原文沒有的新欄位 `errors`（欄位 → 訊息陣列，與 ASP.NET 內建 `ValidationProblemDetails` 同形狀；欄位名用對外名稱，例如 Cancel 回 `id`、Book 回 `slotId`）。400 有**兩個來源**：`ValidationBehavior`（業務層驗證）與 `[ApiController]` 的 model binding 失敗（例如 `doctorId=abc`、JSON 格式錯誤，原本回一個沒有 `errorCode`、key 為 PascalCase 的預設 400，且發生在 MediatR 之前）。兩者都走同一個 `ApiProblemDetails`（後者透過 `InvalidModelStateResponseFactory`，key 轉 camelCase），確保只有一種 400 形狀。
+5. **規則與行為變更**：Login——`email` 必填且 ≤ 256（對應 `users.email VARCHAR(256)`）、`password` 必填；Book——`slotId > 0`；Cancel——`id > 0`；GetAvailableSlots——`doctorId > 0`、`date` 不可為 `default`（query string 少了 `date` 時 model binding 會悄悄給 `0001-01-01`）。`PatientId` 來自已驗證的 JWT、不是使用者輸入，不驗證。以下行為變更皆為預期：非正數 id 由 404 變 400；缺 `date` 的 slots 查詢由**靜默的 `200 []`** 變 400；Login 空 email、空 password、email 超過 256 由 401 變 400。以 characterization 測試在**未修改的程式碼**上先記錄實際回應、改動後以同一組輸入再跑一次：19 個 case 中 16 個依預期改變，3 個不變（2 個 control 與不匹配任何路由的 `id=abc`）。
+6. **順帶發現並修正的既有偏離（非原定範圍）**：被 `GlobalExceptionHandler` 對映的錯誤（404 / 409 / 401）實際一直回 `application/json`，與 §7 規定的 `application/problem+json` 不符。原因是 `WriteAsJsonAsync` 會無條件覆寫先前設好的 `Response.ContentType`，需要把 `contentType` 直接傳給它。這個 bug 之所以沒被發現，是因為沒有任何測試斷言過 Content-Type；現已新增嚴格的斷言 helper（不用 `ContentType?.MediaType.Should()`，那種寫法在 header 缺席時會悄悄跳過斷言）並套用到既有的 404 / 409 測試。反向驗證（mutation）：還原舊寫法後整個整合測試套件有 16 個測試變紅，含既有的 Schedule Query 404、Cancel 404 / 409。
+7. **JWT claims 組裝共用（實作細節，無架構變更）**：`JwtClaimsBuilder.BuildClaims` 放在 Infrastructure（`JwtRegisteredClaimNames` 來自只有 Infrastructure 引用的 JWT 套件，§4.2），簽發端與測試的 token 偽造 helper 共用同一份 claims 結構。
+8. **已知、刻意延後（1e）**：`ExceptionHandlerMiddleware` 目前會把已對映的業務例外（404 / 409 / 現在還有 400）以 error level 記 log；驗證失敗是使用者輸入問題，不該是 error，留到 1e 的 Logging 一併處理。
+
 ---
 
 ---
