@@ -108,6 +108,21 @@ Schedule Query 開始實作前，使用者直接給出與 §7.2 原文不同的�
 3. **保留明確的 `404 DOCTOR_NOT_FOUND`**：與原文一致（原文本來就有這條），但特別強調不可退化成「查無資料一律回空陣列」——`doctorId` 不存在（404）與「該 doctorId 當天沒有時段」（200 + 空陣列）必須是呼叫端可分辨的兩種不同結果。實作：新增 `IDoctorRepository.ExistsAsync()`（最小化介面，目前只有這一個方法）+ `DoctorNotFoundException`，對映模式比照既有的 `ScheduleSlotNotFoundException` → `404 SLOT_NOT_FOUND`。
 4. **§4.2 Deferred Decision 的落地**：§4.2 原本把「Application 是否依賴 `Microsoft.EntityFrameworkCore.Abstractions`」列為待決，預設傾向「`IReadDbContext` 介面隔離的嚴格版本」。本次查詢切片具體採用的做法是：新增 `IScheduleSlotQueryRepository`（`Application/Abstractions`），方法簽章直接回傳 `Task<List<ScheduleSlotDto>>`（DTO，不是 `IQueryable`、也不是 Domain Entity），Infrastructure 內部用 EF Core LINQ 投影（`Select` + `AsNoTracking()`）實作。即：**不**讓 Application 依賴 EF Core Abstractions，走比「`IReadDbContext`」更嚴格的「repository 直接回傳 DTO」版本。與既有的 `IScheduleSlotRepository`（寫入用，回傳/操作 Domain Entity）刻意分成兩個介面，放在同一個 `Abstractions/` 資料夾，不額外分子資料夾。
 
+### v1.7 — 2026-10-03：Cancel Appointment 實作後的驗證與修正（§5.3、§7.4、§8.5）
+
+Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.3 原文不同或原文未涵蓋的結論。依 §7 版本保留規則，§5.3、§7.4、§8.5 原文一律保留，差異記錄如下：
+
+1. **§5.3 的「SaveChanges()：兩列（appointment、slot）各自做 version check」描述的是單一次 flush；實際改為同一筆顯式交易內的兩次 flush，先 `schedule_slots` 後 `appointments`**（`ExecuteInTransactionAsync`，與 Booking 同一機制，見 v1.4）。原因是鎖定順序必須與 Booking 一致（先拿 slot 的 X 鎖），否則 Book/Cancel 混跑會重新引入 v1.4 修掉的死結風險。
+   **實測證據（非推論）**：
+   - 把兩次 flush 合併成單次 `SaveChangesAsync` 後，MySQL server 端 general log 顯示收到的順序是 `UPDATE appointments` 先於 `UPDATE schedule_slots`——EF 在 Modified／Modified 且無相依邊時，確實退回資料表名稱字典序（`appointments` < `schedule_slots`），與 Booking 的鎖定順序相反。這把 v1.4 針對「Added dependent／Modified principal」的分析，在「兩個 Modified」的情境下也實測確認了一次。
+   - 正確寫法下，同一份 general log 與應用程式自己的 EF SQL log 都顯示：`start transaction` → `UPDATE schedule_slots` → `UPDATE appointments` → `commit`。
+   - **衍生的寫法限制**：`appointment.Cancel()` 必須在第一次 flush **之後**才呼叫。change tracker 會把所有已修改的實體一起 flush，提早呼叫會讓 appointment 的 UPDATE 被併進第一次 flush，順序又反了（有單元測試以「兩次 flush 當下的實體狀態」鎖住這件事，並經 mutation 驗證會紅燈）。
+2. **新增 Domain 守衛 `Appointment.EnsureCanBeCancelled()`（設計決策，已與使用者確認）**：因為寫入順序要求 `slot.Release()` 先於 `appointment.Cancel()`，而「已取消」這條規則原本只存在於 `Cancel()` 內，順序一旦固定，重複取消 `BookedCount` 已為 0 的時段就會先撞上 `SlotReleaseUnderflowException`（未對映，HTTP 500），而不是 `409 ALREADY_CANCELLED`。解法是把規則抽成可單獨呼叫的守衛，`Cancel()` 也呼叫它，規則只活在 Domain 一處。**未採用**的替代方案：在 Handler 內自己檢查 `Status == Cancelled` 再丟例外（把 Domain 規則在 Application 層重複一份）。
+3. **所有權檢查（`appointment.PatientId != 呼叫者`）排在「已取消」檢查之前**，且「預約不存在」與「不是你的」丟同一個 `AppointmentNotFoundException`、同一個訊息。這與 §7.4 既有 [Decision]（兩者合併回應，避免洩漏他人資料存在性）一致，非偏離；順序本身是實作層的關鍵細節——反過來的話，陌生人可從 409 vs 404 推測他人預約是否已取消。
+4. **§7.4 的選填 request body `{ "reason": "..." }` 目前未實作**：沒有任何欄位可以儲存取消理由，`CancelAppointmentCommand` 只有 `(AppointmentId, PatientId)`。屬於 MVP 範圍取捨，若未來要做，需先決定儲存位置（`appointments` 新欄位或獨立稽核表）。§7.4 的 Route（`POST .../cancel`）、`200 { appointmentId, status, cancelledAtUtc }`、`404 APPOINTMENT_NOT_FOUND`、`409 ALREADY_CANCELLED` 均已照原文實作並加入 `GlobalExceptionHandler` 對映。
+5. **§8.5 [Decision] 變體測試「併發 Cancel（同一 appointment）恰好一個成功」已完成**：5 輪 × 10 個併發請求取消同一筆預約（slot 上另有 2 筆其他預約，使 double-release 可被偵測），每輪皆為「1 成功 + 9 `CONCURRENCY_CONFLICT`」，`booked_count` 恰好只釋放一次（3 → 2），兩表無 drift，無死結（`TransientConflictException` 一旦出現會讓測試直接崩潰）。輸家得到的是 `CONCURRENCY_CONFLICT`（可重試，重試後才會看到 `ALREADY_CANCELLED`），而非直接 `ALREADY_CANCELLED`——因為併發下兩者都通過了記憶體內的 pre-check，真正的裁決者是 slot／appointment 各自的 version 檢查。**§8.5 的另一個變體「Book/Cancel 混合負載」尚未做**，留待獨立處理。
+6. **Cancel 的 atomicity 驗證（比照 §12 第 13 項對 Booking 的驗證方式，等級只高不低）**：用臨時 MySQL trigger 強制 Cancel 的第二次 UPDATE（`appointments`）必然失敗，第一次 UPDATE（`schedule_slots`）則先成功，重現「第一次 flush 已成功、第二次才失敗」的危險視窗，實測整筆交易完整回滾（`booked_count`、兩列的 `version`、`status` 皆不變）。反向驗證（mutation）：移除顯式交易後，測試如預期紅燈，實測出現 `booked_count` 歸零但 `Appointment.Status` 仍為 `Booked` 的 drift。
+
 ---
 
 ---

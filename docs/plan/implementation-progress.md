@@ -10,16 +10,32 @@
 
 ---
 
-## 目前狀態（最後更新：2026-09-18）
+## 目前狀態（最後更新：2026-10-03）
 
 - [x] 0. 前置作業：`git init`（repo 已存在，含 initial commit）
 - [x] 1a 骨架（commit `246fed4`：4 專案＋DI 組裝＋docker-compose(MySQL)＋health check，`dotnet run` 可起、`/health` 回 200）
 - [x] 1b Domain + DB（commit `e35614e`：ScheduleSlot/Appointment entity＋invariant＋18 個 Domain unit test 全綠＋EF 設定＋version interceptor＋migration＋seed；已用真實 Docker MySQL 8.0.39 驗證 migration 套用、CHECK constraint、generated column 皆如預期運作；獨立 blind review 抓到 6 項發現，5 項已修正，1 項（TimeSlot 用 Complex Type 而非文件寫的 owned type）與使用者確認後以 architecture-plan.md §0 v1.2 版本化更新處理）
 - [x] 1c 併發驗證（全案最重要里程碑）—— **Exit criteria 已達成**：Testcontainers 整合測試專案（`MedConnect.IntegrationTests`）＋ §8.5 招牌測試（50 個不同病人搶 Capacity=5）＋ 無 partial commit 專門測試，全部綠燈，5 輪共 250 個請求 0 死結、0 非預期例外、0 超賣、兩表 0 drift。過程中用真實 MySQL 抓到**兩項文件層級的錯誤假設**（InnoDB 死結未被 §5.2 涵蓋；§8.5 的 `min(N, Capacity)` 與「不啟用 retry」互斥），已依 §7 版本保留規則記入 architecture-plan.md §0 v1.4，未覆寫原文。斷言有效性以 mutation testing 反向驗證過，非「怎麼跑都會過」的假測試。
-- [ ] 1d 補齊 MVP
+- [ ] 1d 補齊 MVP —— **四支 API 的實作已全部完成，但階段尚未結案**（見下方「1d 剩餘事項」）
+  - [x] Login + Password Hashing + JWT 簽發（commit `8da411c`）
+  - [x] JWT Bearer 驗證 middleware + 全域 FallbackPolicy（commit `6b62f84`）；`patient_id` claim 名稱抽成共用常數（commit `d345ef3`）
+  - [x] Login/JWT/Middleware 子範圍的 Reviewer 檢視與 4 項修正（commit `a111423`）
+  - [x] Schedule Query（commit `b8adf12`，architecture-plan.md §0 v1.6）
+  - [x] Cancel Appointment（commit `cdea1c5`，architecture-plan.md §0 v1.7）
 - [ ] 1e 加值
 
-1c 已完整完成。下一步進入 1d（Login/JWT＋Schedule Query＋Cancel），但在那之前建議先單獨處理 architecture-plan.md §12 第 7 項（Retry 機制）——1c 實測已把它從「加值項目」升為「§8.5 第 2/4 條斷言能否成立的前提」，使用者已指定此項要單獨用一次 Architect Mode 討論，不得順帶做掉。
+目前全測試：Domain 25 + Application 20 + Infrastructure 11 + Integration 21 = **77 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
+
+1c 已完整完成。**1d 剩餘事項**（尚未做，故 1d 不勾選為完成）：
+
+- Schedule Query 與 Cancel Appointment 尚未經過 Reviewer 檢視（Login/JWT/Middleware 子範圍已檢視並修正過）。
+- Reviewer 檢視後決定「等 Schedule Query / Cancel 做完再一起清」的項目，現在到期：`LoginResult` 與 `GeneratedToken` 重複、Login 兩次 DB round-trip、`ApiWebApplicationFactory` 與 `MySqlContainerFixture` 的 Testcontainers 設定重複、`JwtAuthenticationTests.CreateToken` 與 `JwtTokenService` 的 claim 建構重複，另有 `JwtTokenService` 的 XML 註解仍寫著「驗證 middleware 是下一步」已過時。
+- 已記錄、刻意延後的缺口：`role: Patient` 授權未強制（architecture-plan.md §7.3 要求 Booking 需 Patient 角色，目前只有 bare `[Authorize]`；Cancel 同樣沿用；目前沒有任何 Admin token 簽發機制，故尚無實際風險，留待 Admin 相關工作時處理）。
+- 計畫文件有寫、但程式碼中**目前不存在**的項目（grep 驗證過）：§7.1–7.3 狀態碼表列出的 `400 VALIDATION_FAILED`，以及 §5.1 流程與 §9.2 所述的 MediatR pipeline behaviors（Logging／Validation／Performance）。需要使用者決定是在 1d 補上，還是明確移到 1e／降級。
+- §8.5 變體測試「Book/Cancel 混合負載」尚未做（「併發 Cancel」變體已於 Cancel 實作時完成）。
+- 本階段的知識點教學總結（執行迴圈第 8 步）尚未做。
+
+另外 architecture-plan.md §12 第 7 項（Retry 機制）仍須單獨用一次 Architect Mode 討論，不得順帶做掉；本機 MySQL 連接埠 3306 vs 13306 的不一致（見 2026-09-25 變更紀錄）依然未處理。
 
 ---
 
@@ -108,3 +124,9 @@
   **可能成因**（尚未實際查證，僅為推測）：`docker-compose.yml` 的埠對應寫的是 `"${MYSQL_PORT:-3306}:3306"`，代表這個容器極可能是在某次帶有 `MYSQL_PORT=13306` 環境變數的 shell（例如本機另一個常駐 3306 的服務、或先前手動除錯時暫時改過）下啟動的；容器本身持續執行超過一週（`CREATED 9 days ago`），時間上早於這次 1d 工作。目前的 shell session 並未設定 `MYSQL_PORT`，代表這個對應是啟動當下決定的，事後改 `.env`/環境變數不會回溯影響已存在的容器，需要 `docker compose down` 再 `up` 才會套用新值。
 
   **這次刻意不處理的原因**：不確定使用者是否依賴 13306（例如另一個服務占用了本機 3306），貿然 `docker compose down`/改連線字串屬於會影響本機環境設定的動作，超出這次 Login/JWT 任務範圍，留給使用者決定要固定用 13306（改 `appsettings.Development.json`）還是換回 3306（重建容器）。
+- 2026-10-03：1d 的四支 API 實作全部完成，**但 1d 尚未結案**（剩餘事項見「目前狀態」）。這段期間的提交：
+  - Login + BCrypt 密碼雜湊 + JWT 簽發（`8da411c`）、JWT Bearer 驗證 middleware + 全域 FallbackPolicy，並首次以 `WebApplicationFactory` 測試真實 HTTP pipeline，補上 §12 第 6 項遺留的驗證（`6b62f84`）、`patient_id` claim 名稱抽成共用常數（`d345ef3`）。
+  - Login/JWT/Middleware 子範圍的 Reviewer 檢視（`a111423`）：10 項發現中，現場修正 4 項（Login timing side-channel——帳號不存在時也跑一次假 Verify；格式錯誤的雜湊值回 401 而非 500；Jwt Issuer/Audience 補上啟動時 fail-fast 檢查；新增 `ClaimsPrincipalExtensions.GetPatientId()` 共用 helper），其餘 6 項清理與 `role: Patient` 授權缺口依使用者決定延後。
+  - Schedule Query（`b8adf12`）：專案第一個 CQRS Query-side 切片，新的 Query Repository 模式（`IScheduleSlotQueryRepository` 回傳 DTO、兩段式 LINQ 投影確保純 SQL 執行 + `AsNoTracking()`）；與 §7.2 原文的差異（單日查詢、DTO 欄位、保留 404 `DOCTOR_NOT_FOUND`）與 §4.2 Deferred Decision 的落地記於 architecture-plan.md §0 v1.6。
+  - Cancel Appointment（`cdea1c5`）：與 Booking 一致的鎖定順序（同一筆顯式交易內兩次 flush，先 `schedule_slots` 後 `appointments`），以 MySQL server 端 general log 與 mutation 實測確認「合併成單次 flush 會讓 EF 改先送 `UPDATE appointments`」；三種錯誤寫法（提早呼叫 `Cancel()`、合併 flush、拿掉顯式交易）都經 mutation 驗證會讓對應測試真的變紅；5 輪 × 10 併發取消同一筆預約，每輪恰 1 成功、名額只釋放一次、無死結。詳細記於 architecture-plan.md §0 v1.7（含與 §5.3 單一 SaveChanges 描述的差異）。
+  - 本機 MySQL 連接埠 3306 vs 13306 的不一致仍未處理，手動驗證仍以環境變數 `ConnectionStrings__MedConnect` 暫時覆寫。
