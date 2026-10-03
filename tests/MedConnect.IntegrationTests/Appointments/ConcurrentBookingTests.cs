@@ -130,13 +130,13 @@ public class ConcurrentBookingTests
             "有 retry 時成功數應接近 Capacity；遠低於它代表重試沒有發揮作用或過度保守");
         succeeded.Should().HaveCountLessThanOrEqualTo(SlotCapacity, "成功數不可能超過 capacity，超過就是超賣");
 
-        // 死結（MySqlError 1213）目前完全沒有被 UnitOfWork.SaveChangesAsync 攔截、轉譯
-        // （見該檔案：只認得 DbUpdateConcurrencyException 與 1062 duplicate key）。如果它
-        // 曾經以任何形式漏出來，並不會被誤算進下面這兩種已知的 errorCode 裡——它會是一個
-        // 完全不同的例外型別，連本測試的 catch (SlotFullException) / catch
-        // (ConcurrencyConflictException) 都接不住，會讓上面的 Task.WhenAll 直接把它原樣拋出、
-        // 測試在跑到這裡之前就已經紅燈，不會被這條斷言悄悄吞掉、也不會偽裝成第三種 errorCode。
-        // 換句話說：底下這條斷言能執行到，本身就代表這一輪測試裡沒有任何一個死結漏網。
+        // 死結（MySqlError 1213）由 UnitOfWork.SaveChangesAsync 轉譯成 TransientConflictException（§0 v1.5），
+        // 再被 RetryBehavior 重試；重試用盡時會被包進 RetryExhaustedException（InnerException 保留原始型別）。
+        // 所以死結不會以 TransientConflictException 的身分漏到這裡：若轉譯或重試出了問題、讓它以任何
+        // 其他型別外洩，本測試的 catch 都接不住，Task.WhenAll 會原樣拋出、測試在跑到這裡之前就已紅燈，
+        // 不會被這條斷言悄悄吞掉，也不會偽裝成第四種 errorCode。
+        // 換句話說：底下這條斷言能執行到，本身就代表這一輪沒有未被轉譯的例外漏網。
+        // 注意：這條斷言**分辨不出** RETRY_EXHAUSTED 的最後一次失敗是樂觀鎖衝突還是死結。
         failed.Should().OnlyContain(
             r => r.ErrorCode == "SLOT_FULL" || r.ErrorCode == "CONCURRENCY_CONFLICT" || r.ErrorCode == "RETRY_EXHAUSTED",
             "失敗只能來自這三個已知原因；出現別的代表有非預期的失敗路徑");
