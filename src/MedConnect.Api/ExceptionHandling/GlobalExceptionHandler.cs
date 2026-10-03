@@ -17,6 +17,8 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
         {
             ScheduleSlotNotFoundException => (StatusCodes.Status404NotFound, "SLOT_NOT_FOUND"),
             DoctorNotFoundException => (StatusCodes.Status404NotFound, "DOCTOR_NOT_FOUND"),
+            AppointmentNotFoundException => (StatusCodes.Status404NotFound, "APPOINTMENT_NOT_FOUND"),
+            AppointmentAlreadyCancelledException => (StatusCodes.Status409Conflict, "ALREADY_CANCELLED"),
             SlotFullException => (StatusCodes.Status409Conflict, "SLOT_FULL"),
             SlotClosedException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),
             SlotInPastException => (StatusCodes.Status409Conflict, "SLOT_NOT_BOOKABLE"),

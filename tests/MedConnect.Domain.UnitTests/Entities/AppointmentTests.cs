@@ -42,4 +42,28 @@ public class AppointmentTests
 
         act.Should().Throw<AppointmentAlreadyCancelledException>();
     }
+
+    [Fact]
+    public void EnsureCanBeCancelled_WhenBooked_DoesNotThrowAndDoesNotMutate()
+    {
+        var appointment = new Appointment(slotId: 1, patientId: 2, Now);
+
+        appointment.EnsureCanBeCancelled();
+
+        // 純粹的驗證：不可以順手改狀態，否則 Handler 在 Release() 之前呼叫它就會讓
+        // Appointment 提前變 Modified，破壞「slot 先 flush、appointment 後 flush」的順序。
+        appointment.Status.Should().Be(AppointmentStatus.Booked);
+        appointment.CancelledAtUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public void EnsureCanBeCancelled_WhenAlreadyCancelled_Throws()
+    {
+        var appointment = new Appointment(slotId: 1, patientId: 2, Now);
+        appointment.Cancel(Now);
+
+        var act = () => appointment.EnsureCanBeCancelled();
+
+        act.Should().Throw<AppointmentAlreadyCancelledException>();
+    }
 }
