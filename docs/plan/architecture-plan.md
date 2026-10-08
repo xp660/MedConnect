@@ -157,6 +157,21 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
    - **實測（調整後）**：`ConcurrentBookingTests` 連跑 15 次 15 次通過；併發 Cancel 測試連跑 8 次 8 次通過、`RETRY_EXHAUSTED` 0 次。
 10. **未解決**：§12 第 7 項 (c)（公平性：重試是否讓某些請求系統性地更容易搶到）本輪**未量測**。
 
+### v1.10 — 2026-10-08：Architecture Tests（NetArchTest）落地（§4.2、§10 1e）
+
+§4.2 的 [Decision]「用 NetArchTest 把依賴規則寫成自動化 Architecture Test」於 1e 第一塊實作。依 §7 版本保留規則，§4.2 原文不覆寫，記錄如下：
+
+1. **[Decision] 獨立專案 `MedConnect.ArchitectureTests`**（`NetArchTest.Rules` 1.3.2），不放進既有的 `*.UnitTests`：這類測試掃描的是編譯後組件，不是執行行為。四條規則（皆為嚴格版本、無例外子句）：Domain 不依賴其他層與 EF Core／MySqlConnector／MediatR／ASP.NET Core；Application 不依賴 Infrastructure／Api；Application 完全不依賴 `Microsoft.EntityFrameworkCore`；Infrastructure 不依賴 Api。
+2. **實作前的事實確認（非推測）**：第 3 條規則動手前先查 Application 是否有任何 EF Core 的直接／間接引用——原始碼 0 個 `using Microsoft.EntityFrameworkCore`、0 個 EF Attribute（僅 4 處 XML 註解文字提到名稱）；編譯後組件引用只有 MediatR、MediatR.Contracts、DI.Abstractions、Domain 與 System（Domain 只有 System）。故不需要任何例外子句。
+3. **[Decision] 另有 `ScannerSanityTests`（解決的唯一問題：NetArchTest 對空集合或打錯的命名空間字串一律回報成功，規則可能永遠綠燈卻什麼都沒擋）**：每個被掃描的組件確實有型別；規則用到的命名空間字串對「確實存在的依賴」必須找得到（正向對照）。
+4. **反向（mutation）驗證**：暫時植入違規再還原，7 種情境皆使對應規則紅燈且失敗訊息列出違規型別全名——Domain→MediatR（base type）、Domain→EF Core（僅出現在方法內部）、Application→EF Core（欄位／屬性上的 Attribute／僅方法內部，共三種寫法）、Application→`MedConnect.Infrastructure.*`、Application→`MedConnect.Api.*`、Infrastructure→`MedConnect.Api.*`、Domain→`MedConnect.Application.*`。規則 2、4 無法用「真的加專案參考」植入違規（反向參考會是循環參考、編譯不過），所以這兩條的 mutation 是以違規命名空間的型別＋依賴它的型別植入。
+5. **這組測試補上了編譯器的哪些缺口、哪些只是防護網（誠實的定位）**：
+   - **防護網（編譯器已經會擋）**：規則 2（Application→Infrastructure／Api）、規則 4（Infrastructure→Api），以及規則 1 的「分層」部分（Domain→Application／Infrastructure／Api）。專案之間的 ProjectReference 是單向的，反向引用是循環參考、根本編譯不過。這幾條測試的價值是：萬一有人調整專案結構（例如合併專案、移除或改向某個 ProjectReference），規則仍會把違規抓出來；它們不是在補編譯器的洞。
+   - **真正補上編譯器缺口的**：規則 1 的「外部技術」部分（Domain 不依賴 EF Core／MySqlConnector／MediatR／ASP.NET Core——任何人在 Domain 的 csproj 加一個 NuGet 套件，編譯器完全不會有意見）與規則 3（Application 不依賴 EF Core——同理，加一個套件、或經由傳遞依賴用到 EF 型別／Attribute，編譯器不擋）。
+6. **[已知缺口，之後再補]（§4.2 表格列出但本次範圍外，不在本輪順帶擴張）**，依優先順序：
+   1. **Api 不直接使用 `DbContext`／EF 型別（優先）**——§4.2 表格明列的規則，且 Api 是唯一同時引用 Infrastructure 的上層，編譯器擋不住它直接用 EF 型別，是缺口中風險最高的一個。
+   2. Application 不依賴 ASP.NET Core 與 MySQL driver（MySqlConnector／Pomelo）。
+
 ---
 
 ---

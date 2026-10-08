@@ -25,9 +25,11 @@
   - [x] Validation Behavior + Pipeline Behavior 骨架 + `400 VALIDATION_FAILED`（commit `b4a9675`，architecture-plan.md §0 v1.8）
   - [x] JWT claims 組裝共用（`JwtClaimsBuilder.BuildClaims`）+ `JwtTokenService` 過時 XML 註解修正（commit `bacbf5a`）
   - [x] Reviewer 檢視後到期的三項清理：移除重複的 `LoginResult`（commit `a111d7c`）；Login 兩次 DB round-trip 合併成單次 LEFT JOIN 並刪除變成死碼的 `IPatientRepository`（commit `bf6a297`）；兩個整合測試 fixture 的 Testcontainers 容器定義共用（commit `da972e1`）
-- [ ] 1e 加值
+- [ ] 1e 加值（進行中）
+  - [x] ArchitectureTests（新專案 `MedConnect.ArchitectureTests`，NetArchTest.Rules 1.3.2；四條依賴方向規則＋掃描器自我驗證，architecture-plan.md §0 v1.10；**已知缺口**：Api 不直接使用 DbContext／EF 型別（優先）、Application 不依賴 ASP.NET Core／MySQL driver）
+  - [ ] Redis 讀取快取／Serilog＋OpenTelemetry（含 Logging／Performance behaviors）／Dockerfile／GitHub Actions CI／README
 
-目前全測試：Domain 25 + Application 54 + Infrastructure 14 + Integration 48 = **141 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39）。
+目前全測試：Domain 25 + Application 68 + Infrastructure 14 + Integration 57 + Architecture 17 = **181 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181）。
 
 1c、1d 已完整完成。**1d 結案時刻意延後的項目**（皆已記錄、不阻擋 1d 結案，不是遺漏）：
 

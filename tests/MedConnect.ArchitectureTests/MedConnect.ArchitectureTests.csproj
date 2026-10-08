@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="FluentAssertions" Version="8.10.0" />
+    <!-- Pomelo 帶進 EFCore.Relational 9.0.0、Infrastructure 要 9.0.5，不直接指定會有 MSB3277 版本衝突警告
+         （IntegrationTests 用同樣方式處理）。這個專案本身不使用 EF Core，只是被掃描的組件需要它能載入。 -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.5" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <!-- architecture-plan.md §4.2：把依賴方向寫成自動化測試。這類測試掃描的是「編譯後的組件」，
+         不是執行行為，所以獨立成一個專案，不放進 Application/Infrastructure.UnitTests。 -->
+    <PackageReference Include="NetArchTest.Rules" Version="1.3.2" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!-- 四個被掃描的組件都要引用，測試才拿得到它們的 Assembly。 -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\MedConnect.Domain\MedConnect.Domain.csproj" />
+    <ProjectReference Include="..\..\src\MedConnect.Application\MedConnect.Application.csproj" />
+    <ProjectReference Include="..\..\src\MedConnect.Infrastructure\MedConnect.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\MedConnect.Api\MedConnect.Api.csproj" />
+  </ItemGroup>
+
+</Project>
