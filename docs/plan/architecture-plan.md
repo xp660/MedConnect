@@ -188,6 +188,7 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
    - **紅燈驗證（證明 CI 有偵測力）**：開臨時分支 `ci-red-check`（只含兩處改動：一個新增、明顯故意失敗的測試 `IntentionalCiFailureTests`，以及讓 workflow 也響應該分支的 push），**未改動任何真正的測試、未動 master 歷史**。結果：run 37875130855 失敗，失敗的是 `Test (Release)` 這一步（restore／build 皆成功，排除環境問題），check-run annotations 明確列出 `Failed MedConnect.Domain.UnitTests.CiRedCheck.IntentionalCiFailureTests.CI_RED_CHECK_this_test_fails_on_purpose` 與訊息 `INTENTIONAL CI RED CHECK`，其餘測試未被列為失敗——紅燈是為對的原因變紅。驗證後只刪除該遠端分支（刪除前確認名稱），該分支的 commit 不會進 master；回到綠燈的證據是其後 master 上的運行。
    - **順帶修正（紅燈驗證時發現、屬於本 workflow 自身的缺陷）**：失敗註解原本用 `Failed ` 比對，會連 ASP.NET 的 `Failed to determine the https port` 警告一起抓進來；改成只匹配結尾帶 `[N ms]` 的測試結果行。
    - **已知事項**：GitHub 公告 `ubuntu-latest` 將於 2026-10-19 起遷移到 Ubuntu 26（runner-images#14748）。目前未釘死 runner 版本；若遷移後出現環境相關的失敗，可改釘 `ubuntu-24.04`，屆時再評估。另：不登入無法下載完整 job log（API 回 403），所以失敗時的可見性靠上述 annotations 與 Job Summary。
+9. **[Decision] runner 釘版本：`ubuntu-latest` → `ubuntu-24.04`（2026-10-09，取代第 8 項「已知事項」中「目前未釘死」的狀態）。** 目的：避免 2026-10-19 起 `latest` 遷移到 Ubuntu 26 時，CI 在我們不知情的情況下因環境改變而變紅。第 2 項、§8.6 原文中的 `ubuntu-latest` 保留不改，以本項為準。**之後要升級時手動修改 `ci.yml` 的 `runs-on`**（升級時需重新確認 Docker、.NET SDK 與 Testcontainers 在新版 runner 上仍正常）。代價：不會自動獲得新 runner 的更新，也要留意舊版 runner image 終有被汰除的一天。
 
 ---
 

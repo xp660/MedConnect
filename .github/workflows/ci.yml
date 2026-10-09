@@ -1,5 +1,7 @@
 # architecture-plan.md §0 v1.11：直接 commit 到 master，CI 負責「在乾淨環境事後驗證」，不負責攔截。
-# runner 必須是 ubuntu-latest：整合測試用 Testcontainers 起真的 MySQL，需要 Docker daemon。
+# runner 必須是 Linux：整合測試用 Testcontainers 起真的 MySQL，需要 Docker daemon。
+# 釘在 ubuntu-24.04 而不是 ubuntu-latest：GitHub 會把 latest 遷移到 Ubuntu 26（2026-10-19 起），
+# 釘版本後環境不會在我們不知情時改變。要升級時手動改這一行（見 architecture-plan.md §0 v1.11 第 9 項）。
 name: CI
 
 on:
@@ -18,7 +20,7 @@ env:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
 
     steps:
