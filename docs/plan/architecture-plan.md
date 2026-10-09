@@ -172,6 +172,18 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
    1. **Api 不直接使用 `DbContext`／EF 型別（優先）**——§4.2 表格明列的規則，且 Api 是唯一同時引用 Infrastructure 的上層，編譯器擋不住它直接用 EF 型別，是缺口中風險最高的一個。
    2. Application 不依賴 ASP.NET Core 與 MySQL driver（MySqlConnector／Pomelo）。
 
+### v1.11 — 2026-10-09：CI（GitHub Actions）落地與流程決策（§8.6、§10 1e）
+
+§8.6 [Decision]（Testcontainers 需要 Docker、GitHub Actions `ubuntu-latest` 內建 Docker）於 1e 第二塊實作。依 §7 版本保留規則，§8.6 原文不覆寫，記錄如下：
+
+1. **[Decision] 維持直接 commit 到 master，CI 負責「在乾淨環境事後驗證」，不負責攔截。** 檔案 `.github/workflows/ci.yml`，觸發為 `push` 與 `pull_request` 到 `master`。**[Alternative]（已比較但不採用，團隊開發時再採用）**：所有變更走 PR + branch protection（required status check），讓 CI 紅燈時 master 根本進不去。目前是單人專案，PR 流程只增加摩擦而沒有對應的保護對象；代價是 master 可能短暫處於 CI 紅燈狀態，需靠自己看見並立即處理。
+2. **[Decision] 內容**：`ubuntu-latest`（不用 Windows runner，Testcontainers 需要 Docker）；checkout → setup-dotnet → restore → build（Release）→ test（Release，`--no-build`）；跑全部測試專案，含 Integration Tests 與 Architecture Tests；`permissions: contents: read`；job `timeout-minutes: 20`。action 版本以 GitHub 官方 release 為準（2026-10-09 以 GitHub API 查證，非憑記憶）：`actions/checkout@v7`（v7.0.1）、`actions/setup-dotnet@v6`（v6.0.0）、`actions/cache@v6`（v6.1.0）。
+3. **.NET SDK 版本的依據**：專案沒有 `global.json`，由 9 個 csproj 一致的 `<TargetFramework>net9.0</TargetFramework>` 判斷，workflow 用 `dotnet-version: 9.0.x`。
+4. **[Decision] NuGet 快取用 `actions/cache`（`~/.nuget/packages`，key = 所有 csproj 的 hash），不用 `setup-dotnet` 的 `cache: true`。** 原因（查證自該 action 的 README）：`cache: true` 需要 repository 根目錄有 `packages.lock.json`，沒有就直接報錯，而本專案沒有啟用 lock file。**[Alternative]（不採用）**：啟用 `RestorePackagesWithLockFile`——要改 9 個 csproj、新增 9 個 lock 檔，對這個規模過重；若之後想要「鎖定依賴版本」這個附帶好處再評估。
+5. **密鑰：CI 不需要任何額外處理。** `Jwt:SecretKey` 由 `ApiWebApplicationFactory` 以 `AddInMemoryCollection` 自行提供（明確標示僅供測試的假值），沒有任何測試依賴 `dotnet user-secrets`；app 的 fail-fast 驗證因此不受影響、不需要放寬。以實測確認，非僅讀程式碼：把 `APPDATA` 暫時指向空資料夾（使本機 user-secrets 不可見）後，Release 完整套件 181 個全數通過。repository 與 workflow 不含任何真實密鑰。
+6. **觀察指標在 CI 的可見性**：test step 用 `console;verbosity=detailed` 才會印出測試內 `ITestOutputHelper` 的輸出；另有 step 把 `[health] RETRY_EXHAUSTED=...` 行寫入 Job Summary，失敗時把失敗的測試名稱與訊息輸出為 `::error::` 註解（供不登入也能讀的 check-run annotations API 取得）。這些僅是可見性，不是斷言，不改變任何測試的判斷標準。
+7. **刻意不做**：不為徽章新建 README（目前沒有 README，有了再加）；不放寬任何斷言來讓 CI 變綠——第一次在 CI 失敗時的處理原則是「回報失敗的測試名稱、訊息與判斷」，不是調整斷言或連續修改設定重試。
+
 ---
 
 ---

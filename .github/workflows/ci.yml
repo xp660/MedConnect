@@ -1,0 +1,74 @@
+# architecture-plan.md §0 v1.11：直接 commit 到 master，CI 負責「在乾淨環境事後驗證」，不負責攔截。
+# runner 必須是 ubuntu-latest：整合測試用 Testcontainers 起真的 MySQL，需要 Docker daemon。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# 這個 workflow 只需要讀 repository 內容；預設的 GITHUB_TOKEN 權限比這大，明確收斂。
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # SDK 版本來自 csproj 的 <TargetFramework>net9.0</TargetFramework>（專案沒有 global.json）。
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 9.0.x
+
+      # 不用 setup-dotnet 的 `cache: true`：它要求 repository 根目錄有 packages.lock.json，
+      # 沒有就直接報錯，而本專案沒有啟用 lock file。改用 actions/cache 快取 NuGet 全域套件資料夾，
+      # key 取所有 csproj 的 hash（套件版本都寫在 csproj 裡，改版本就會換 key）。
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-
+
+      - name: Restore
+        run: dotnet restore MedConnect.sln
+
+      - name: Build (Release)
+        run: dotnet build MedConnect.sln -c Release --no-restore
+
+      # 全部測試專案：Domain / Application / Infrastructure / Architecture / Integration（Testcontainers）。
+      # detailed 的 console logger 才會印出測試內 ITestOutputHelper 的輸出，
+      # 包含併發測試的 `[health] RETRY_EXHAUSTED=...` 觀察指標。
+      # shell: bash 會啟用 pipefail，tee 不會吞掉 dotnet test 的失敗退出碼。
+      - name: Test (Release)
+        shell: bash
+        run: dotnet test MedConnect.sln -c Release --no-build --logger "console;verbosity=detailed" 2>&1 | tee test.log
+
+      # 把觀察指標與失敗的測試名稱放到容易看到的地方（Job Summary / 失敗註解），不必翻整份 log。
+      - name: Publish health metrics to the job summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '### Concurrency health metrics (observation only, not assertions)'
+            echo '```'
+            grep -F '[health]' test.log || echo '(no [health] lines found)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Annotate failed tests
+        if: failure()
+        shell: bash
+        run: |
+          grep -E -A2 '^\s+Failed ' test.log | grep -v '^--$' | head -9 | while IFS= read -r line; do
+            echo "::error::${line}"
+          done || true
