@@ -27,7 +27,7 @@
   - [x] Reviewer 檢視後到期的三項清理：移除重複的 `LoginResult`（commit `a111d7c`）；Login 兩次 DB round-trip 合併成單次 LEFT JOIN 並刪除變成死碼的 `IPatientRepository`（commit `bf6a297`）；兩個整合測試 fixture 的 Testcontainers 容器定義共用（commit `da972e1`）
 - [ ] 1e 加值（進行中）
   - [x] ArchitectureTests（新專案 `MedConnect.ArchitectureTests`，NetArchTest.Rules 1.3.2；四條依賴方向規則＋掃描器自我驗證，architecture-plan.md §0 v1.10；**已知缺口**：Api 不直接使用 DbContext／EF 型別（優先）、Application 不依賴 ASP.NET Core／MySQL driver）
-  - [~] GitHub Actions CI（`.github/workflows/ci.yml`，architecture-plan.md §0 v1.11；直接 commit master、CI 事後驗證；實際 Actions 結果見下方更新）
+  - [x] GitHub Actions CI（`.github/workflows/ci.yml`，architecture-plan.md §0 v1.11；直接 commit master、CI 事後驗證）：master 首次運行即綠（約 106 秒），紅燈驗證已完成（臨時分支 `ci-red-check`，驗證後已刪除遠端分支）
   - [ ] Redis 讀取快取／Serilog＋OpenTelemetry（含 Logging／Performance behaviors）／Dockerfile／README
 
 目前全測試：Domain 25 + Application 68 + Infrastructure 14 + Integration 57 + Architecture 17 = **181 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181）。

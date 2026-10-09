@@ -183,6 +183,11 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
 5. **密鑰：CI 不需要任何額外處理。** `Jwt:SecretKey` 由 `ApiWebApplicationFactory` 以 `AddInMemoryCollection` 自行提供（明確標示僅供測試的假值），沒有任何測試依賴 `dotnet user-secrets`；app 的 fail-fast 驗證因此不受影響、不需要放寬。以實測確認，非僅讀程式碼：把 `APPDATA` 暫時指向空資料夾（使本機 user-secrets 不可見）後，Release 完整套件 181 個全數通過。repository 與 workflow 不含任何真實密鑰。
 6. **觀察指標在 CI 的可見性**：test step 用 `console;verbosity=detailed` 才會印出測試內 `ITestOutputHelper` 的輸出；另有 step 把 `[health] RETRY_EXHAUSTED=...` 行寫入 Job Summary，失敗時把失敗的測試名稱與訊息輸出為 `::error::` 註解（供不登入也能讀的 check-run annotations API 取得）。這些僅是可見性，不是斷言，不改變任何測試的判斷標準。
 7. **刻意不做**：不為徽章新建 README（目前沒有 README，有了再加）；不放寬任何斷言來讓 CI 變綠——第一次在 CI 失敗時的處理原則是「回報失敗的測試名稱、訊息與判斷」，不是調整斷言或連續修改設定重試。
+8. **實測結果（2026-10-09）**：
+   - **master 第一次運行：成功**（commit `b2b72b2`，run 37874926061，job 106 秒：restore 6s、build 12s、test 76s；首次快取未命中）。第一次就綠，未調整任何斷言或設定。
+   - **紅燈驗證（證明 CI 有偵測力）**：開臨時分支 `ci-red-check`（只含兩處改動：一個新增、明顯故意失敗的測試 `IntentionalCiFailureTests`，以及讓 workflow 也響應該分支的 push），**未改動任何真正的測試、未動 master 歷史**。結果：run 37875130855 失敗，失敗的是 `Test (Release)` 這一步（restore／build 皆成功，排除環境問題），check-run annotations 明確列出 `Failed MedConnect.Domain.UnitTests.CiRedCheck.IntentionalCiFailureTests.CI_RED_CHECK_this_test_fails_on_purpose` 與訊息 `INTENTIONAL CI RED CHECK`，其餘測試未被列為失敗——紅燈是為對的原因變紅。驗證後只刪除該遠端分支（刪除前確認名稱），該分支的 commit 不會進 master；回到綠燈的證據是其後 master 上的運行。
+   - **順帶修正（紅燈驗證時發現、屬於本 workflow 自身的缺陷）**：失敗註解原本用 `Failed ` 比對，會連 ASP.NET 的 `Failed to determine the https port` 警告一起抓進來；改成只匹配結尾帶 `[N ms]` 的測試結果行。
+   - **已知事項**：GitHub 公告 `ubuntu-latest` 將於 2026-10-19 起遷移到 Ubuntu 26（runner-images#14748）。目前未釘死 runner 版本；若遷移後出現環境相關的失敗，可改釘 `ubuntu-24.04`，屆時再評估。另：不登入無法下載完整 job log（API 回 403），所以失敗時的可見性靠上述 annotations 與 Job Summary。
 
 ---
 

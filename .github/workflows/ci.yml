@@ -54,6 +54,8 @@ jobs:
         run: dotnet test MedConnect.sln -c Release --no-build --logger "console;verbosity=detailed" 2>&1 | tee test.log
 
       # 把觀察指標與失敗的測試名稱放到容易看到的地方（Job Summary / 失敗註解），不必翻整份 log。
+      # 失敗註解只匹配「測試結果行」（結尾帶 [N ms]）；單用 'Failed ' 會連 ASP.NET 的
+      # 'Failed to determine the https port' 警告也抓進來（紅燈驗證時發現的雜訊）。
       - name: Publish health metrics to the job summary
         if: always()
         shell: bash
@@ -69,6 +71,6 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E -A2 '^\s+Failed ' test.log | grep -v '^--$' | head -9 | while IFS= read -r line; do
+          grep -E -A2 '^\s+Failed .* \[(< )?[0-9.]+ ?m?s\]$' test.log | grep -v '^--$' | head -9 | while IFS= read -r line; do
             echo "::error::${line}"
           done || true
