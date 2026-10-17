@@ -76,3 +76,21 @@ jobs:
           grep -E -A2 '^\s+Failed .* \[(< )?[0-9.]+ ?m?s\]$' test.log | grep -v '^--$' | head -9 | while IFS= read -r line; do
             echo "::error::${line}"
           done || true
+
+  # Docker 冒煙測試（architecture-plan.md §0 v1.13）：用 compose 起 MySQL + API，打一遍真實的使用流程
+  # （health → 示範帳號 Login → 查診次 → 訂位）。與 build-and-test 平行，互不依賴；失敗時由
+  # scripts/smoke-test.sh 輸出 compose logs 並把 API 的 Fatal 濃縮成 annotation，結束一律 down -v。
+  # token 在腳本裡拿到就用 ::add-mask:: 遮蔽，從不印出。
+  docker-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # .env 被 .gitignore 排除；CI 從提交進 git 的範本（只有假值）複製出來，等於驗證「照範本做就能跑起來」。
+      - name: Create .env from the example
+        run: cp .env.example .env
+
+      - name: Docker smoke test
+        run: bash scripts/smoke-test.sh

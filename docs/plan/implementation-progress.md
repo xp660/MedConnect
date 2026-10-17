@@ -29,9 +29,10 @@
   - [x] ArchitectureTests（新專案 `MedConnect.ArchitectureTests`，NetArchTest.Rules 1.3.2；四條依賴方向規則＋掃描器自我驗證，architecture-plan.md §0 v1.10；**已知缺口**：Api 不直接使用 DbContext／EF 型別（優先）、Application 不依賴 ASP.NET Core／MySQL driver）
   - [x] GitHub Actions CI（`.github/workflows/ci.yml`，architecture-plan.md §0 v1.11；直接 commit master、CI 事後驗證）：master 首次運行即綠（約 106 秒），紅燈驗證已完成（臨時分支 `ci-red-check`，驗證後已刪除遠端分支）
   - [x] Logging 第一段（Serilog 只在 Api；`LoggingBehavior`＋Handler 業務事件；`GlobalExceptionHandler` 唯一決定例外日誌層級；內建 middleware／EF 對同一例外的重複 Error 以事件 Id 精確過濾；啟動失敗 Fatal；敏感資料測試；Architecture Test 新增「Domain／Application 不依賴 Serilog」；architecture-plan.md §0 v1.12）
-  - [ ] OpenTelemetry（追蹤、指標、回應 `traceId` 與 W3C trace id 的對齊——見 v1.12 第 12 項）／Redis 讀取快取／Dockerfile／README
+  - [x] Docker（`Dockerfile` 非 root／8080、compose 加 `api` 服務且主機 port 只綁 127.0.0.1、`Database:MigrateOnStartup`／`Database:SeedDemoData`／`Hosting:UseHttpsRedirection` 設定開關、JWT 密鑰最小長度啟動驗證、`.env.example`、CI `docker-smoke` job；architecture-plan.md §0 v1.13）
+  - [ ] OpenTelemetry（追蹤、指標、回應 `traceId` 與 W3C trace id 的對齊——見 v1.12 第 12 項）／Redis 讀取快取／README
 
-目前全測試：Domain 25 + Application 81 + Infrastructure 14 + Integration 89 + Architecture 19 = **228 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181，加入日誌後為 227，死結重試改 Warning 後為 228）。
+目前全測試：Domain 25 + Application 81 + Infrastructure 14 + Integration 107 + Architecture 19 = **246 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181，加入日誌後為 227，死結重試改 Warning 後為 228，啟動開關與 JWT 密鑰驗證後為 246）。
 
 1c、1d 已完整完成。**1d 結案時刻意延後的項目**（皆已記錄、不阻擋 1d 結案，不是遺漏）：
 
