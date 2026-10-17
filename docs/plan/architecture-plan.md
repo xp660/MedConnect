@@ -220,6 +220,14 @@ Cancel Appointment 實作並用真實 MySQL 8.0.39 驗證後，有數項與 §5.
 12. **請求編號與回應 `traceId` 對齊（實測確認，不需要補程式碼）。** 請求範圍內的日誌（Hosting 的 scope）預設就帶 `RequestId`，值等於 `HttpContext.TraceIdentifier`，也就是 `ApiProblemDetails` 回應裡的 `traceId`；`HttpLoggingTests` 斷言同一請求中 GlobalExceptionHandler 與 Application 的每一筆日誌的 `RequestId` 都等於回應 body 的 `traceId`。**留給 OpenTelemetry 那一段決定的事（本次未動）**：JSON 輸出另外帶 `@tr`／`@sp`（W3C 的 trace id／span id，來自 `Activity`），這與 `traceId`（`TraceIdentifier`）是兩套不同的值；OpenTelemetry 落地時要決定回應的 `traceId` 是否改為 W3C trace id。
 13. **[已知缺口，不在本次範圍]** ①**模型繫結失敗的 400**（例如 `doctorId=abc`）走 `InvalidModelStateResponseFactory`、不經例外處理，目前沒有任何應用程式日誌；刻意暫不記，理由：錯誤訊息可能帶使用者輸入的原始內容。②啟動失敗的 Fatal 沒有自動化測試。③OpenTelemetry（追蹤、指標、衝突率）是下一段。④v1.10 第 6 項的兩個 Architecture Test 缺口（Api 不用 EF／Application 不依賴 ASP.NET Core 與 MySQL driver）仍未補。⑤目前沒有 `UseSerilogRequestLogging`（`LoggingBehavior` 已記每個 MediatR 請求的耗時；HTTP 層級的請求日誌留給 OpenTelemetry 那一段一併考慮）。
 14. **[Decision] 修正第 5 項的 RetryBehavior 層級（2026-10-17，review 後的後續 commit）：因 `TransientConflictException`（死結）而重試改記 Warning；因 `ConcurrencyConflictException` 而重試維持 Debug。** 理由：版本衝突是樂觀鎖的預期內正常行為（量大、低價值）；死結不是——Booking 與 Cancel 的鎖定順序刻意一致就是為了不死結，所以每一次死結都代表鎖定順序或競爭出了預期之外的事，即使被重試吸收、請求最後成功，也值得在日誌裡被看到（不必等 OpenTelemetry 指標）。`DeadlockLoggingTests` 斷言真實死結被吸收後恰好一筆 Warning、沒有任何 Error；mutation（改回 Debug）使該斷言與單元測試紅燈。連續死結直到重試用盡時，會有每次重試一筆 Warning 加上最後 GlobalExceptionHandler 的一筆 Warning。
+15. **client 中途取消請求的日誌行為（2026-10-17，探針實測，結論：不改程式碼、不補永久測試）。** 用暫時的探針（已刪除）走真實 HTTP pipeline，ASP.NET Core 9.0.5：
+    - **A. Handler 內可取消的等待，client 取消**：例外是 `TaskCanceledException`；`GlobalExceptionHandler` 沒有被呼叫、沒有 Error；伺服器端回應 499（client 已斷線，看到的是自己的 `TaskCanceledException`）；沒有任何其他來源的 Error／Warning。
+    - **B. 真實 MySQL 語句卡在鎖上，client 取消**：例外是 `OperationCanceledException`（EF Core／MySqlConnector 直接丟出，沒有被包）；同樣沒有 Error、沒有呼叫 `GlobalExceptionHandler`、499；內建 middleware 自己記一行 Debug `The request was aborted by the client.`（事件 Id 4 `RequestAborted`）。
+    - **C. 內部逾時（自己的 `CancellationTokenSource` 到期，client 仍連線）**：`RequestAborted` 沒有被取消，所以走一般的未對映例外流程——`GlobalExceptionHandler` 記一筆 Error 帶堆疊，回應 500。
+    - **機制**：「例外是取消類型而且 `RequestAborted` 已被取消」這個條件由內建的 `ExceptionHandlerMiddleware` 自己判斷：成立時它記一行 Debug、把回應設成 499，完全不呼叫任何 `IExceptionHandler`；不成立（情境 C）就照一般未對映例外處理。`LoggingBehavior` 仍會記一行 Information，`Outcome` 是例外的實際型別名稱（情境 A 是 `TaskCanceledException`、B 是 `OperationCanceledException`，查詢時兩個都要算）。
+    - **[Decision] 不改程式碼，也不補永久測試。** 理由：危險的方向（內部逾時不可被當成正常事件吞掉）已被既有的「未對映例外恰好一筆 Error」測試涵蓋；框架升級後最壞的變化是取消事件變成多餘的 Error 雜訊，屬於溫和的失敗方向（多一點雜訊，而不是少一筆該有的錯誤）。不在 `GlobalExceptionHandler` 重複實作同樣的判斷（永遠走不到的死碼，還要跟著框架維護）。
+    - **已知風險（暫不處理）**：框架的判斷看的是例外本身是不是取消類型；若取消例外被某一層包成別的例外（例如 `AggregateException`），條件不成立，client 已斷線也會被記成 Error 加 500。目前路徑（MediatR → UnitOfWork → EF Core → MySqlConnector）上取消例外都是直接冒出來、沒有被包，所以暫不處理。
+    - **探針的限制**：捕捉 sink 掛在過濾之後，無法看出取消時 EF 有沒有記 20102／10000 這類 Error（有的話也會被既有過濾排除，不影響輸出）。
 
 ---
 
