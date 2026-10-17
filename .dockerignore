@@ -1,0 +1,22 @@
+# 建置 context 不需要的東西。最重要的是 .env：密鑰絕不可被 COPY 進任何一層映像。
+.env
+.env.*
+.git
+.gitignore
+.gitattributes
+.github
+.claude
+.vs
+.idea
+
+# 本機建置產物：映像內自己 restore + publish，不吃主機的 bin/obj（避免帶進 Windows 的路徑與快取）。
+**/bin
+**/obj
+TestResults
+
+# 映像只需要 src；測試與文件不屬於執行環境。
+tests
+docs
+scripts
+*.md
+jid.txt

@@ -37,6 +37,8 @@ artifacts/
 ## Environment / secrets
 .env
 .env.*
+# .env.example 是提交進 git 的範本（只有假值），不能被上面的 .env.* 吃掉
+!.env.example
 appsettings.*.local.json
 secrets.json
 

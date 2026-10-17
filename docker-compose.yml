@@ -1,21 +1,47 @@
+# 本機開發與展示用的 compose（architecture-plan.md §0 v1.13）。
+#   docker compose up mysql        只起 MySQL（既有的開發流程，行為不變）
+#   docker compose up --build      起 MySQL + API（需要 .env，範本見 .env.example）
+# 所有主機 port 都只綁 127.0.0.1：資料庫與「密碼公開的示範帳號」不該暴露在區域網路。
+# 沒有 .env 時，下面的預設值與這個檔案原本寫死的值相同，所以舊的開發流程不受影響。
 services:
   mysql:
     image: mysql:8.0.39
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: medconnect
       MYSQL_USER: medconnect
-      MYSQL_PASSWORD: medconnect
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-medconnect}
     ports:
-      - "${MYSQL_PORT:-3306}:3306"
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
     volumes:
       - medconnect-mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      # -h 127.0.0.1（TCP）而不是 localhost（unix socket）：mysql 映像第一次初始化時會先起一個
+      # 「不開網路」的暫時伺服器，socket 的 ping 會在它還沒真正開放 TCP 之前就回成功，
+      # api 若在這個空檔連線會被拒絕。TCP 的 ping 只有在正式伺服器上才會成功。
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  api:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # 這個堆疊是展示用：明確打開 migrate 與示範資料。其他任何地方這兩個開關預設都是 false。
+      Database__MigrateOnStartup: "true"
+      Database__SeedDemoData: "true"
+      # 容器只聽 HTTP 8080，沒有 https 埠可轉。
+      Hosting__UseHttpsRedirection: "false"
+      ConnectionStrings__MedConnect: "Server=mysql;Port=3306;Database=medconnect;User=medconnect;Password=${MYSQL_PASSWORD:-medconnect};"
+      # 沒設時刻意代入空字串而不是 `:?` 報錯：`:?` 會讓「只起 mysql」的指令也跟著失敗。
+      # 空字串會讓 API 在啟動時因缺少（或太短的）密鑰而失敗，並記一行 Fatal。
+      Jwt__SecretKey: "${JWT_SECRET_KEY:-}"
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
 
 volumes:
   medconnect-mysql-data:

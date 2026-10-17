@@ -1,0 +1,7 @@
+# 這幾種檔案在 Linux 容器／CI 裡執行或被讀取，行尾必須是 LF：
+# 腳本若被 Windows 的 core.autocrlf 轉成 CRLF，bash 會報 "$'\r': command not found"，
+# env 檔的值會多一個看不見的 \r。與開發者的 git 設定無關，一律強制 LF。
+*.sh text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+.env.example text eol=lf
