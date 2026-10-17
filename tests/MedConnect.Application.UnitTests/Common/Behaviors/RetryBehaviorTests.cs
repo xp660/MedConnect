@@ -181,17 +181,29 @@ public class RetryBehaviorTests
     }
 
     [Fact]
-    public async Task Handle_LogsEachRetryAtDebugNamingTheRequestAndTheFailureType()
+    public async Task Handle_LogsEachRetryAfterAVersionConflictAtDebugNamingTheRequestAndTheFailureType()
     {
-        var (next, _) = FailThenSucceed(2, Deadlock);
+        var (next, _) = FailThenSucceed(2, Conflict);
 
         await CreateBehavior().Handle(new SampleRequest(), next, CancellationToken.None);
 
         _logger.Entries.Should().HaveCount(2);
         _logger.Entries.Should().OnlyContain(e => e.Level == LogLevel.Debug && e.Exception == null);
         _logger.Entries[0].State["RequestName"].Should().Be(nameof(SampleRequest));
-        _logger.Entries[0].State["FailureType"].Should().Be(nameof(TransientConflictException));
+        _logger.Entries[0].State["FailureType"].Should().Be(nameof(ConcurrencyConflictException));
         _logger.Entries.Select(e => e.State["Retry"]).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task Handle_LogsEachRetryAfterADeadlockAtWarning()
+    {
+        var (next, _) = FailThenSucceed(2, Deadlock);
+
+        await CreateBehavior().Handle(new SampleRequest(), next, CancellationToken.None);
+
+        _logger.Entries.Should().HaveCount(2);
+        _logger.Entries.Should().OnlyContain(e => e.Level == LogLevel.Warning && e.Exception == null);
+        _logger.Entries[0].State["FailureType"].Should().Be(nameof(TransientConflictException));
     }
 
     [Fact]

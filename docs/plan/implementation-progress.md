@@ -31,7 +31,7 @@
   - [x] Logging 第一段（Serilog 只在 Api；`LoggingBehavior`＋Handler 業務事件；`GlobalExceptionHandler` 唯一決定例外日誌層級；內建 middleware／EF 對同一例外的重複 Error 以事件 Id 精確過濾；啟動失敗 Fatal；敏感資料測試；Architecture Test 新增「Domain／Application 不依賴 Serilog」；architecture-plan.md §0 v1.12）
   - [ ] OpenTelemetry（追蹤、指標、回應 `traceId` 與 W3C trace id 的對齊——見 v1.12 第 12 項）／Redis 讀取快取／Dockerfile／README
 
-目前全測試：Domain 25 + Application 80 + Infrastructure 14 + Integration 89 + Architecture 19 = **227 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181，加入日誌後為 227）。
+目前全測試：Domain 25 + Application 81 + Infrastructure 14 + Integration 89 + Architecture 19 = **228 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181，加入日誌後為 227，死結重試改 Warning 後為 228）。
 
 1c、1d 已完整完成。**1d 結案時刻意延後的項目**（皆已記錄、不阻擋 1d 結案，不是遺漏）：
 

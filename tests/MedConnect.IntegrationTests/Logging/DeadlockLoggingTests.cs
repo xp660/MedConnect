@@ -91,9 +91,12 @@ public sealed class DeadlockLoggingTests
             _output.WriteLine($"[{line.Level}] {line.RenderMessage()}");
         }
 
-        retryLines.Should().Contain(
-            e => e.Level == LogEventLevel.Debug && e.Text("FailureType") == "TransientConflictException",
-            "請求真的撞上了 InnoDB 死結（1213），被 UnitOfWork 轉成 TransientConflictException 後重試");
+        // 死結被重試吸收後請求成功：恰好一筆 Warning（RetryBehavior 因死結而重試），而且沒有任何 Error。
+        // 若有人把這行改回 Debug（死結又變得看不見），這個斷言會紅燈。
+        var deadlockWarnings = sink.Events.Where(e => e.Level == LogEventLevel.Warning).ToList();
+        deadlockWarnings.Should().ContainSingle("請求真的撞上了 InnoDB 死結（1213），被轉成 TransientConflictException 後重試——這是唯一一筆 Warning")
+            .Which.Text("FailureType").Should().Be("TransientConflictException");
+        deadlockWarnings[0].IsFromNamespace("MedConnect.Application.Common.Behaviors.RetryBehavior").Should().BeTrue();
         response.StatusCode.Should().Be(HttpStatusCode.Created, "重試之後應該成功");
 
         var errors = sink.Events.Where(e => e.Level >= LogEventLevel.Error).ToList();

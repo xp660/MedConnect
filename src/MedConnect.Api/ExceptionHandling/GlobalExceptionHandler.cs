@@ -50,7 +50,9 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
             // 沒有對應到已知的業務例外：這代表真的是未預期的 bug，不應該被這裡假裝成某種業務錯誤而吞掉
             // （§5.2：非 500 只適用於「預期內的正常事件」）。完整例外與堆疊在這裡記錄恰好一次，
             // 然後交還給預設的例外處理（500）。內建 middleware 自己那一筆被過濾掉了，所以 500 的紀錄
-            // 全靠這一行——測試（UnhandledExceptionLoggingTests）守著它不會悄悄消失。
+            // 全靠這一行——兩個測試守著它不會悄悄消失：
+            // HttpLoggingTests.An_unmapped_exception_is_logged_exactly_once_as_Error_with_its_exception（走真正的 HTTP pipeline）、
+            // ExceptionLogLevelTests.An_unmapped_exception_is_logged_exactly_once_as_Error_with_the_exception_and_left_unhandled。
             _logger.LogError(exception, "Unhandled exception of type {ExceptionType}", exception.GetType().Name);
 
             return false;

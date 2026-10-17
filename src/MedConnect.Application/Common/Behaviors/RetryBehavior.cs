@@ -56,9 +56,15 @@ public sealed class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
                     throw new RetryExhaustedException(attempt + 1, ex);
                 }
 
-                // Debug：樂觀鎖下衝突是預期內的正常行為，50 人搶 5 個名額會有上百行，放在 Information 會淹沒
-                // 真正需要看的訊息。重試用盡才是需要注意的事，由 GlobalExceptionHandler 以 Warning 記一次。
-                _logger.LogDebug(
+                // 層級依失敗原因而不同（architecture-plan.md §0 v1.12 第 14 項）：
+                //   ConcurrencyConflictException → Debug：樂觀鎖下衝突是預期內的正常行為，50 人搶 5 個名額會有上百行，
+                //     放在 Information 以上會淹沒真正需要看的訊息。
+                //   TransientConflictException（死結）→ Warning：Booking 與 Cancel 的鎖定順序刻意一致就是為了不死結，
+                //     所以每一次死結都代表鎖定順序或競爭出了預期之外的事；即使被重試吸收、請求最後成功，也值得被看到。
+                // 重試用盡另由 GlobalExceptionHandler 以 Warning 記一次。
+                var retryLevel = ex is TransientConflictException ? LogLevel.Warning : LogLevel.Debug;
+                _logger.Log(
+                    retryLevel,
                     "Retrying {RequestName} after {FailureType} (retry {Retry} of {MaxRetries})",
                     typeof(TRequest).Name, ex.GetType().Name, attempt + 1, _options.MaxRetries);
 
