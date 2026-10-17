@@ -1,6 +1,7 @@
 using MediatR;
 using MedConnect.Application.Abstractions;
 using MedConnect.Application.Common.Exceptions;
+using Microsoft.Extensions.Logging;
 
 namespace MedConnect.Application.Auth.Commands.Login;
 
@@ -15,15 +16,18 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, GeneratedToken>
     private readonly IUserRepository _userRepository;
     private readonly IPasswordHasher _passwordHasher;
     private readonly ITokenService _tokenService;
+    private readonly ILogger<LoginHandler> _logger;
 
     public LoginHandler(
         IUserRepository userRepository,
         IPasswordHasher passwordHasher,
-        ITokenService tokenService)
+        ITokenService tokenService,
+        ILogger<LoginHandler> logger)
     {
         _userRepository = userRepository;
         _passwordHasher = passwordHasher;
         _tokenService = tokenService;
+        _logger = logger;
     }
 
     public async Task<GeneratedToken> Handle(LoginCommand request, CancellationToken cancellationToken)
@@ -56,6 +60,12 @@ public sealed class LoginHandler : IRequestHandler<LoginCommand, GeneratedToken>
         var patientId = candidate.PatientId
             ?? throw new InvalidOperationException($"User {candidate.User.Id} has no associated Patient record.");
 
-        return _tokenService.GenerateToken(candidate.User, patientId);
+        var token = _tokenService.GenerateToken(candidate.User, patientId);
+
+        // 只記 UserId：不記 email（個資）、密碼、token。登入失敗不在這裡記——INVALID_CREDENTIALS 由
+        // GlobalExceptionHandler 統一以 Information 記一次。
+        _logger.LogInformation("User {UserId} logged in", candidate.User.Id);
+
+        return token;
     }
 }

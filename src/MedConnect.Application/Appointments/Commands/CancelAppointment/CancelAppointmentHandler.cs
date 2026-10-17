@@ -1,6 +1,7 @@
 using MediatR;
 using MedConnect.Application.Abstractions;
 using MedConnect.Application.Common.Exceptions;
+using Microsoft.Extensions.Logging;
 
 namespace MedConnect.Application.Appointments.Commands.CancelAppointment;
 
@@ -10,17 +11,20 @@ public sealed class CancelAppointmentHandler : IRequestHandler<CancelAppointment
     private readonly IScheduleSlotRepository _scheduleSlotRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<CancelAppointmentHandler> _logger;
 
     public CancelAppointmentHandler(
         IAppointmentRepository appointmentRepository,
         IScheduleSlotRepository scheduleSlotRepository,
         IUnitOfWork unitOfWork,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ILogger<CancelAppointmentHandler> logger)
     {
         _appointmentRepository = appointmentRepository;
         _scheduleSlotRepository = scheduleSlotRepository;
         _unitOfWork = unitOfWork;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     public async Task<CancelAppointmentResult> Handle(CancelAppointmentCommand request, CancellationToken cancellationToken)
@@ -48,7 +52,7 @@ public sealed class CancelAppointmentHandler : IRequestHandler<CancelAppointment
 
         var now = _timeProvider.GetUtcNow();
 
-        return await _unitOfWork.ExecuteInTransactionAsync(async ct =>
+        var result = await _unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             // 順序跟 BookAppointmentHandler 一致：先 UPDATE schedule_slots（拿 X 鎖），再 UPDATE appointments。
             // 兩次 SaveChanges 不可合併：EF 在同一次 flush 內按資料表名稱字典序送出語句，
@@ -65,5 +69,12 @@ public sealed class CancelAppointmentHandler : IRequestHandler<CancelAppointment
 
             return new CancelAppointmentResult(appointment.Id, appointment.Status, appointment.CancelledAtUtc!.Value);
         }, cancellationToken);
+
+        // 業務事件：只記 ID，commit 之後才記（理由同 BookAppointmentHandler）。
+        _logger.LogInformation(
+            "Appointment {AppointmentId} cancelled (slot {SlotId}, patient {PatientId})",
+            result.AppointmentId, slot.Id, appointment.PatientId);
+
+        return result;
     }
 }

@@ -44,6 +44,7 @@ public sealed class MySqlContainerFixture : IAsyncLifetime
             .Build();
 
         var services = new ServiceCollection();
+        services.AddLogging(); // LoggingBehavior / Handler 需要 ILogger<T>（Program.cs 由 host 提供）
         services.AddApplication();
         services.AddInfrastructure(configuration);
         _serviceProvider = services.BuildServiceProvider();

@@ -7,6 +7,7 @@ using MedConnect.Domain.Enums;
 using MedConnect.Domain.Exceptions;
 using MedConnect.Domain.ValueObjects;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
@@ -36,8 +37,10 @@ public class BookAppointmentHandlerTests
             .Returns(ci => ci.Arg<Func<CancellationToken, Task<BookAppointmentResult>>>()(ci.Arg<CancellationToken>()));
     }
 
+    private readonly CapturingLogger<BookAppointmentHandler> _logger = new();
+
     private BookAppointmentHandler CreateHandler() =>
-        new(_scheduleSlotRepository, _appointmentRepository, _unitOfWork, _timeProvider);
+        new(_scheduleSlotRepository, _appointmentRepository, _unitOfWork, _timeProvider, _logger);
 
     private static ScheduleSlot CreateOpenSlot(int capacity = 2)
     {
@@ -115,5 +118,30 @@ public class BookAppointmentHandlerTests
         var act = async () => await CreateHandler().Handle(command, CancellationToken.None);
 
         await act.Should().ThrowAsync<ConcurrencyConflictException>();
+    }
+
+    [Fact]
+    public async Task Handle_WhenBooked_LogsExactlyOneInformationBusinessEventWithOnlyIds()
+    {
+        _scheduleSlotRepository.GetByIdAsync(42, Arg.Any<CancellationToken>()).Returns(CreateOpenSlot(capacity: 2));
+
+        var result = await CreateHandler().Handle(new BookAppointmentCommand(PatientId: 7, ScheduleSlotId: 42), CancellationToken.None);
+
+        var entry = _logger.Entries.Should().ContainSingle().Subject;
+        entry.Level.Should().Be(LogLevel.Information);
+        entry.State["AppointmentId"].Should().Be(result.AppointmentId);
+        entry.State["SlotId"].Should().Be(result.ScheduleSlotId);
+        entry.State["PatientId"].Should().Be(7L);
+    }
+
+    [Fact]
+    public async Task Handle_WhenBookingFails_LogsNoBusinessEvent()
+    {
+        _scheduleSlotRepository.GetByIdAsync(99, Arg.Any<CancellationToken>()).Returns((ScheduleSlot?)null);
+
+        var act = async () => await CreateHandler().Handle(new BookAppointmentCommand(PatientId: 7, ScheduleSlotId: 99), CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+        _logger.Entries.Should().BeEmpty("失敗由 GlobalExceptionHandler 統一記一次，Handler 只記成功");
     }
 }

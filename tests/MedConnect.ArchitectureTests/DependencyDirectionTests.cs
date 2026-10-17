@@ -48,6 +48,18 @@ public class DependencyDirectionTests
             Namespaces.EfCore);
     }
 
+    /// <summary>
+    /// architecture-plan.md §0 v1.12：Serilog 只放在 Api（host）層，Domain 與 Application 只用
+    /// Microsoft.Extensions.Logging 的 ILogger&lt;T&gt;。編譯器擋不住這件事——只要 Application 加一個
+    /// PackageReference 就能用 Serilog 的靜態 Log.Information，沒有任何東西會報警。
+    /// </summary>
+    [Fact]
+    public void Domain_and_Application_do_not_depend_on_Serilog()
+    {
+        DependencyRuleAssertions.ShouldNotDependOn(ArchitectureAssemblies.Domain, Namespaces.Serilog);
+        DependencyRuleAssertions.ShouldNotDependOn(ArchitectureAssemblies.Application, Namespaces.Serilog);
+    }
+
     [Fact]
     public void Infrastructure_does_not_depend_on_Api()
     {

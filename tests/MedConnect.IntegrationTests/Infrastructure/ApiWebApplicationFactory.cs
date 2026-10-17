@@ -45,6 +45,9 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>, I
                 ["Jwt:Issuer"] = Issuer,
                 ["Jwt:Audience"] = Audience,
                 ["Jwt:ExpiryMinutes"] = "60",
+                // TestServer 沒有 https 埠，UseHttpsRedirection 每個請求都會警告「Failed to determine the https port」，
+                // 純粹是測試環境的雜訊，會淹沒測試輸出；只在測試把這個類別調高，正式設定不動。
+                ["Serilog:MinimumLevel:Override:Microsoft.AspNetCore.HttpsPolicy"] = "Error",
             });
         });
     }

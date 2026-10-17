@@ -7,6 +7,8 @@
   <ItemGroup>
     <PackageReference Include="MediatR" Version="12.5.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.5" />
+    <!-- LoggingBehavior / Handler 直接用 ILogger<T>；只引用抽象介面，Application 不可依賴任何具體的日誌實作（Serilog 只在 Api）。 -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.5" />
   </ItemGroup>
 
   <PropertyGroup>

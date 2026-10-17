@@ -186,6 +186,7 @@ public class RetryPipelineTests
             var probe = new RetryProbe();
             var services = new ServiceCollection();
             services.AddSingleton(new RetryOptions { BaseDelay = TimeSpan.Zero, JitterRange = TimeSpan.Zero });
+            services.AddLogging();
             services.AddApplication();
             services.AddInfrastructure(configuration);
 

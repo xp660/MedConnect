@@ -7,6 +7,7 @@ using MedConnect.Domain.Enums;
 using MedConnect.Domain.Exceptions;
 using MedConnect.Domain.ValueObjects;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
@@ -39,8 +40,10 @@ public class CancelAppointmentHandlerTests
             .Returns(ci => ci.Arg<Func<CancellationToken, Task<CancelAppointmentResult>>>()(ci.Arg<CancellationToken>()));
     }
 
+    private readonly CapturingLogger<CancelAppointmentHandler> _logger = new();
+
     private CancelAppointmentHandler CreateHandler() =>
-        new(_appointmentRepository, _scheduleSlotRepository, _unitOfWork, _timeProvider);
+        new(_appointmentRepository, _scheduleSlotRepository, _unitOfWork, _timeProvider, _logger);
 
     private static ScheduleSlot CreateSlotWithBookedCount(int bookedCount, int capacity = 3)
     {
@@ -205,5 +208,31 @@ public class CancelAppointmentHandlerTests
 
         await act.Should().ThrowExactlyAsync<InvalidOperationException>();
         await AssertNothingWasWrittenAsync();
+    }
+
+    [Fact]
+    public async Task Handle_WhenCancelled_LogsExactlyOneInformationBusinessEventWithOnlyIds()
+    {
+        GivenAppointment(CreateAppointment());
+        GivenSlot(CreateSlotWithBookedCount(2));
+
+        var result = await CreateHandler().Handle(new CancelAppointmentCommand(AppointmentId, OwnerPatientId), CancellationToken.None);
+
+        var entry = _logger.Entries.Should().ContainSingle().Subject;
+        entry.Level.Should().Be(LogLevel.Information);
+        entry.State["AppointmentId"].Should().Be(result.AppointmentId);
+        entry.State["PatientId"].Should().Be(OwnerPatientId);
+        entry.State.Keys.Should().BeEquivalentTo(["AppointmentId", "SlotId", "PatientId", "{OriginalFormat}"]);
+    }
+
+    [Fact]
+    public async Task Handle_WhenCancellationFails_LogsNoBusinessEvent()
+    {
+        GivenAppointment(null);
+
+        var act = async () => await CreateHandler().Handle(new CancelAppointmentCommand(AppointmentId, OwnerPatientId), CancellationToken.None);
+
+        await act.Should().ThrowAsync<Exception>();
+        _logger.Entries.Should().BeEmpty();
     }
 }

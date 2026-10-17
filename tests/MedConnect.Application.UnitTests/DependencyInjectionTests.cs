@@ -35,7 +35,7 @@ public class DependencyInjectionTests
     }
 
     [Fact]
-    public void AddApplication_RegistersRetryBehaviorInsideValidationBehavior()
+    public void AddApplication_RegistersTheBehaviorsOutsideInAsLoggingValidationRetry()
     {
         var services = Register();
 
@@ -44,9 +44,10 @@ public class DependencyInjectionTests
             .Select(d => d.ImplementationType)
             .ToList();
 
-        // 註冊順序 = 由外而內的執行順序：Validation 必須在 Retry 之前，
-        // 不合法的輸入才不會進入重試迴圈（同一個驗證錯誤被重試 3 次毫無意義）。
-        behaviors.Should().Equal(typeof(ValidationBehavior<,>), typeof(RetryBehavior<,>));
+        // 註冊順序 = 由外而內的執行順序：
+        //   Logging 在最外層：連驗證失敗也要留下「處理了多久、結果是什麼」。
+        //   Validation 在 Retry 之前：不合法的輸入才不會進入重試迴圈（同一個驗證錯誤被重試 3 次毫無意義）。
+        behaviors.Should().Equal(typeof(LoggingBehavior<,>), typeof(ValidationBehavior<,>), typeof(RetryBehavior<,>));
     }
 
     [Theory]

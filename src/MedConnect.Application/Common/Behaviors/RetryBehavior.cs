@@ -1,6 +1,7 @@
 using MediatR;
 using MedConnect.Application.Abstractions;
 using MedConnect.Application.Common.Exceptions;
+using Microsoft.Extensions.Logging;
 
 namespace MedConnect.Application.Common.Behaviors;
 
@@ -26,12 +27,18 @@ public sealed class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
     private readonly IUnitOfWork _unitOfWork;
     private readonly RetryOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<RetryBehavior<TRequest, TResponse>> _logger;
 
-    public RetryBehavior(IUnitOfWork unitOfWork, RetryOptions options, TimeProvider timeProvider)
+    public RetryBehavior(
+        IUnitOfWork unitOfWork,
+        RetryOptions options,
+        TimeProvider timeProvider,
+        ILogger<RetryBehavior<TRequest, TResponse>> logger)
     {
         _unitOfWork = unitOfWork;
         _options = options;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
@@ -48,6 +55,12 @@ public sealed class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
                 {
                     throw new RetryExhaustedException(attempt + 1, ex);
                 }
+
+                // Debug：樂觀鎖下衝突是預期內的正常行為，50 人搶 5 個名額會有上百行，放在 Information 會淹沒
+                // 真正需要看的訊息。重試用盡才是需要注意的事，由 GlobalExceptionHandler 以 Warning 記一次。
+                _logger.LogDebug(
+                    "Retrying {RequestName} after {FailureType} (retry {Retry} of {MaxRetries})",
+                    typeof(TRequest).Name, ex.GetType().Name, attempt + 1, _options.MaxRetries);
 
                 await Task.Delay(_options.GetDelay(attempt, Random.Shared), _timeProvider, cancellationToken);
 

@@ -18,10 +18,10 @@ public static class DependencyInjection
             cfg.RegisterServicesFromAssembly(assembly);
 
             // 註冊順序 = 由外而內的執行順序（先註冊的包在最外層）。
-            // architecture-plan.md §5.1 規劃的順序是 Logging → Validation → Performance；
-            // 目前只有 Validation，Logging / Performance 留到 1e（Serilog / OpenTelemetry），
-            // 屆時依序加在它的前後即可。
+            // Logging → Validation → Retry（architecture-plan.md §0 v1.12；§5.1 原本寫的 Performance 併入 Logging，
+            // 耗時由 LoggingBehavior 記）。Logging 在最外層：連驗證失敗也要留下「這個請求處理了多久、結果是什麼」。
             // Validation 在外層、Retry 在內層：不合法的輸入不該進入重試迴圈（architecture-plan.md §0 v1.9）。
+            cfg.AddOpenBehavior(typeof(LoggingBehavior<,>));
             cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
             cfg.AddOpenBehavior(typeof(RetryBehavior<,>));
         });

@@ -4,6 +4,7 @@ using MedConnect.Application.Abstractions;
 using MedConnect.Application.Common.Behaviors;
 using MedConnect.Application.Common.Exceptions;
 using MedConnect.Domain.Exceptions;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
@@ -18,8 +19,10 @@ public class RetryBehaviorTests
 
     private readonly IUnitOfWork _unitOfWork = Substitute.For<IUnitOfWork>();
 
+    private readonly CapturingLogger<RetryBehavior<SampleRequest, string>> _logger = new();
+
     private RetryBehavior<SampleRequest, string> CreateBehavior(RetryOptions? options = null) =>
-        new(_unitOfWork, options ?? NoDelay, TimeProvider.System);
+        new(_unitOfWork, options ?? NoDelay, TimeProvider.System, _logger);
 
     private static ConcurrencyConflictException Conflict() => new(new Exception("version mismatch"));
 
@@ -175,5 +178,29 @@ public class RetryBehaviorTests
 
         options.GetDelay(0, new Random()).Should().Be(TimeSpan.FromMilliseconds(10));
         options.GetDelay(2, new Random()).Should().Be(TimeSpan.FromMilliseconds(30));
+    }
+
+    [Fact]
+    public async Task Handle_LogsEachRetryAtDebugNamingTheRequestAndTheFailureType()
+    {
+        var (next, _) = FailThenSucceed(2, Deadlock);
+
+        await CreateBehavior().Handle(new SampleRequest(), next, CancellationToken.None);
+
+        _logger.Entries.Should().HaveCount(2);
+        _logger.Entries.Should().OnlyContain(e => e.Level == LogLevel.Debug && e.Exception == null);
+        _logger.Entries[0].State["RequestName"].Should().Be(nameof(SampleRequest));
+        _logger.Entries[0].State["FailureType"].Should().Be(nameof(TransientConflictException));
+        _logger.Entries.Select(e => e.State["Retry"]).Should().Equal(1, 2);
+    }
+
+    [Fact]
+    public async Task Handle_WhenTheFirstAttemptSucceeds_LogsNothing()
+    {
+        var (next, _) = FailThenSucceed(0, Conflict);
+
+        await CreateBehavior().Handle(new SampleRequest(), next, CancellationToken.None);
+
+        _logger.Entries.Should().BeEmpty();
     }
 }

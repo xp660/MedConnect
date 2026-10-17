@@ -28,15 +28,16 @@
 - [ ] 1e 加值（進行中）
   - [x] ArchitectureTests（新專案 `MedConnect.ArchitectureTests`，NetArchTest.Rules 1.3.2；四條依賴方向規則＋掃描器自我驗證，architecture-plan.md §0 v1.10；**已知缺口**：Api 不直接使用 DbContext／EF 型別（優先）、Application 不依賴 ASP.NET Core／MySQL driver）
   - [x] GitHub Actions CI（`.github/workflows/ci.yml`，architecture-plan.md §0 v1.11；直接 commit master、CI 事後驗證）：master 首次運行即綠（約 106 秒），紅燈驗證已完成（臨時分支 `ci-red-check`，驗證後已刪除遠端分支）
-  - [ ] Redis 讀取快取／Serilog＋OpenTelemetry（含 Logging／Performance behaviors）／Dockerfile／README
+  - [x] Logging 第一段（Serilog 只在 Api；`LoggingBehavior`＋Handler 業務事件；`GlobalExceptionHandler` 唯一決定例外日誌層級；內建 middleware／EF 對同一例外的重複 Error 以事件 Id 精確過濾；啟動失敗 Fatal；敏感資料測試；Architecture Test 新增「Domain／Application 不依賴 Serilog」；architecture-plan.md §0 v1.12）
+  - [ ] OpenTelemetry（追蹤、指標、回應 `traceId` 與 W3C trace id 的對齊——見 v1.12 第 12 項）／Redis 讀取快取／Dockerfile／README
 
-目前全測試：Domain 25 + Application 68 + Infrastructure 14 + Integration 57 + Architecture 17 = **181 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181）。
+目前全測試：Domain 25 + Application 80 + Infrastructure 14 + Integration 89 + Architecture 19 = **227 個全綠**（Integration 含 Testcontainers 真實 MySQL 8.0.39；v2 retry 後由 141 增為 164，加入 ArchitectureTests 後為 181，加入日誌後為 227）。
 
 1c、1d 已完整完成。**1d 結案時刻意延後的項目**（皆已記錄、不阻擋 1d 結案，不是遺漏）：
 
 - `role: Patient` 授權未強制：architecture-plan.md §7.3 要求 Booking 需 Patient 角色，目前只有 bare `[Authorize]`，Cancel 同樣沿用。目前沒有任何 Admin token 簽發機制，故尚無實際風險，留待 Admin 相關工作時處理（§12 第 15 項）。
 - §8.5 變體測試「Book/Cancel 混合負載」尚未做（「併發 Cancel」變體已於 Cancel 實作時完成）。
-- 留到 1e：Logging／Performance pipeline behaviors（§5.1 規劃的順序 Logging → Validation → Performance，目前只實作 Validation）；`ExceptionHandlerMiddleware` 對已對映的業務例外（404／409／400）以 error level 記 log 的問題。
+- 已在 1e 處理（v1.12）：Logging pipeline behavior（順序為 Logging → Validation → Retry，Performance 併入 Logging）；`ExceptionHandlerMiddleware` 對已對映例外記 Error 的問題。尚留：OpenTelemetry。
 - 本階段的 Reviewer 檢視（Schedule Query／Cancel／Validation）與知識點教學總結（執行迴圈第 4、8 步）由使用者在本分頁之外另行處理，不在本分頁追蹤範圍。
 
 **v2 bounded retry（2026-10-03，architecture-plan.md §0 v1.9）**：`RetryBehavior` + `IUnitOfWork.ResetTracking()` + `RETRY_EXHAUSTED` 已實作並實測（50 搶 5：無 retry 平均 1.50 → 有 retry 60 輪全為 5）。既有併發測試已處理 `RETRY_EXHAUSTED`（加入預期失敗清單＋健康指標輸出），§8.5 改下限斷言 `>= Capacity - 1`（見 §0 v1.9 第 9 項）。

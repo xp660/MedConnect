@@ -43,6 +43,7 @@ public class ScannerSanityTests
     [InlineData("Api", Namespaces.Application)]
     [InlineData("Api", Namespaces.Infrastructure)]
     [InlineData("Api", Namespaces.AspNetCore)]
+    [InlineData("Api", Namespaces.Serilog)]
     public void The_namespace_strings_used_by_the_rules_do_match_real_dependencies(string layer, string dependency)
     {
         var assembly = layer switch

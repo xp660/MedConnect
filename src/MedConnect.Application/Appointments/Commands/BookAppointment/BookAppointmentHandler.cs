@@ -2,6 +2,7 @@ using MediatR;
 using MedConnect.Application.Abstractions;
 using MedConnect.Application.Common.Exceptions;
 using MedConnect.Domain.Entities;
+using Microsoft.Extensions.Logging;
 
 namespace MedConnect.Application.Appointments.Commands.BookAppointment;
 
@@ -11,17 +12,20 @@ public sealed class BookAppointmentHandler : IRequestHandler<BookAppointmentComm
     private readonly IAppointmentRepository _appointmentRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly TimeProvider _timeProvider;
+    private readonly ILogger<BookAppointmentHandler> _logger;
 
     public BookAppointmentHandler(
         IScheduleSlotRepository scheduleSlotRepository,
         IAppointmentRepository appointmentRepository,
         IUnitOfWork unitOfWork,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider,
+        ILogger<BookAppointmentHandler> logger)
     {
         _scheduleSlotRepository = scheduleSlotRepository;
         _appointmentRepository = appointmentRepository;
         _unitOfWork = unitOfWork;
         _timeProvider = timeProvider;
+        _logger = logger;
     }
 
     public async Task<BookAppointmentResult> Handle(BookAppointmentCommand request, CancellationToken cancellationToken)
@@ -36,7 +40,7 @@ public sealed class BookAppointmentHandler : IRequestHandler<BookAppointmentComm
         // 這一步刻意留在交易外面：時段已滿/已關閉/已過期都應該連交易都不用開就直接拒絕。
         slot.Book(now);
 
-        return await _unitOfWork.ExecuteInTransactionAsync(async ct =>
+        var result = await _unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             // 順序是有意義的，不能對調（見 IUnitOfWork.ExecuteInTransactionAsync 的說明）：
             // 先讓 schedule_slots 的 UPDATE 拿到 X 鎖，appointments 的 INSERT 才做 FK 檢查。
@@ -51,5 +55,12 @@ public sealed class BookAppointmentHandler : IRequestHandler<BookAppointmentComm
             return new BookAppointmentResult(
                 appointment.Id, slot.Id, appointment.PatientId, appointment.Status, appointment.BookedAtUtc);
         }, cancellationToken);
+
+        // 業務事件：只記 ID。放在交易 commit 之後，所以記到的一定是真的成功、而且只在成功的那次嘗試記一次。
+        _logger.LogInformation(
+            "Appointment {AppointmentId} booked for slot {SlotId} by patient {PatientId}",
+            result.AppointmentId, slot.Id, result.PatientId);
+
+        return result;
     }
 }

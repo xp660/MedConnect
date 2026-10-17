@@ -4,6 +4,7 @@ using MedConnect.Application.Auth.Commands.Login;
 using MedConnect.Application.Common.Exceptions;
 using MedConnect.Domain.Entities;
 using MedConnect.Domain.Enums;
+using Microsoft.Extensions.Logging;
 using NSubstitute;
 using Xunit;
 
@@ -24,7 +25,9 @@ public class LoginHandlerTests
     private readonly IPasswordHasher _passwordHasher = Substitute.For<IPasswordHasher>();
     private readonly ITokenService _tokenService = Substitute.For<ITokenService>();
 
-    private LoginHandler CreateHandler() => new(_userRepository, _passwordHasher, _tokenService);
+    private readonly CapturingLogger<LoginHandler> _logger = new();
+
+    private LoginHandler CreateHandler() => new(_userRepository, _passwordHasher, _tokenService, _logger);
 
     private static User CreateUser(string email = "patient@medconnect.local", string passwordHash = "hashed-value") =>
         new(email, passwordHash, UserRole.Patient, Now);
@@ -120,5 +123,33 @@ public class LoginHandlerTests
         // 密碼驗證確實有跑（證明是「驗證失敗」擋下的，不是別的原因），且沒有簽發任何 token。
         _passwordHasher.Received(1).Verify("wrong-password", user.PasswordHash);
         _tokenService.DidNotReceive().GenerateToken(Arg.Any<User>(), Arg.Any<long>());
+    }
+
+    [Fact]
+    public async Task Handle_WhenLoginSucceeds_LogsOnlyTheUserIdAndNeitherEmailPasswordNorToken()
+    {
+        var user = CreateUser(email: "secret-person@medconnect.local");
+        GivenCandidate(user, PatientId);
+        _passwordHasher.Verify("correct-password", user.PasswordHash).Returns(true);
+        _tokenService.GenerateToken(user, PatientId).Returns(new GeneratedToken("jwt-access-token-value", 3600));
+
+        await CreateHandler().Handle(new LoginCommand(user.Email, "correct-password"), CancellationToken.None);
+
+        var entry = _logger.Entries.Should().ContainSingle().Subject;
+        entry.Level.Should().Be(LogLevel.Information);
+        entry.State.Keys.Should().BeEquivalentTo(["UserId", "{OriginalFormat}"]);
+        entry.Message.Should().NotContain("secret-person").And.NotContain("correct-password").And.NotContain("jwt-access-token-value");
+    }
+
+    [Fact]
+    public async Task Handle_WhenLoginFails_LogsNoBusinessEvent()
+    {
+        _userRepository.GetWithPatientIdByEmailAsync("nobody@medconnect.local", Arg.Any<CancellationToken>())
+            .Returns((UserWithPatientId?)null);
+
+        var act = async () => await CreateHandler().Handle(new LoginCommand("nobody@medconnect.local", "x"), CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidCredentialsException>();
+        _logger.Entries.Should().BeEmpty("INVALID_CREDENTIALS 由 GlobalExceptionHandler 統一記一次");
     }
 }

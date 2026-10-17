@@ -10,6 +10,9 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="9.0.5" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.5" />
+    <!-- 結構化日誌（具名參數變成可查詢欄位）+ UseSerilog 主機整合 + Console sink + appsettings 設定 + JSON 格式，一個套件全包。
+         只放在 Api（host）層；Domain/Application 只用 ILogger<T>（architecture-plan.md §0 v1.12）。 -->
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
     <!-- dotnet-ef 工具需要「startup project」引用 Design 套件才能運作；純 design-time tooling，
          PrivateAssets=all 確保不會外洩成正式相依，Api 的程式碼本身不 using 任何 EF 型別。 -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.5">

@@ -56,33 +56,6 @@ public sealed class RetryExhaustedEndpointTests : IClassFixture<ApiWebApplicatio
         unitOfWork.LastFailureType.Should().Be(expectedLastFailure);
     }
 
-    private sealed class AlwaysConflictingUnitOfWork : IUnitOfWork
-    {
-        private readonly bool _deadlock;
-        private int _transactionCalls;
-        private int _resetTrackingCalls;
-
-        public AlwaysConflictingUnitOfWork(bool deadlock) => _deadlock = deadlock;
-
-        public int TransactionCalls => _transactionCalls;
-        public int ResetTrackingCalls => _resetTrackingCalls;
-        public string? LastFailureType { get; private set; }
-
-        public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-        public void ResetTracking() => Interlocked.Increment(ref _resetTrackingCalls);
-
-        public Task<T> ExecuteInTransactionAsync<T>(Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
-        {
-            Interlocked.Increment(ref _transactionCalls);
-            Exception failure = _deadlock
-                ? new TransientConflictException(new Exception("forced deadlock"))
-                : new ConcurrencyConflictException(new Exception("forced version conflict"));
-            LastFailureType = failure.GetType().Name;
-            throw failure;
-        }
-    }
-
     private static async Task<HttpClient> CreateAuthenticatedClientForNewPatientAsync(
         Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory)
     {

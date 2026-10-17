@@ -27,4 +27,5 @@ internal static class Namespaces
     public const string MySqlConnector = "MySqlConnector";
     public const string MediatR = "MediatR";
     public const string AspNetCore = "Microsoft.AspNetCore";
+    public const string Serilog = "Serilog";
 }
