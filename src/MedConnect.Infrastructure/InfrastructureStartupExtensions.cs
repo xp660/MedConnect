@@ -26,23 +26,24 @@ public static class InfrastructureStartupExtensions
     }
 
     /// <summary>
-    /// 只塞 seed 資料，假設 migration 已經套用過。
+    /// 只塞 seed 資料。要求 migration 已經套用：資料表不存在（或結構落後）時明確失敗，不靜默忽略、
+    /// 也不退回去撞 MySQL 的「Table doesn't exist」——訊息指出該怎麼辦。
     /// </summary>
     public static async Task SeedAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
     {
         using var scope = services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MedConnectDbContext>();
+
+        var pendingMigrations = (await db.Database.GetPendingMigrationsAsync(cancellationToken)).ToList();
+        if (pendingMigrations.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Cannot seed demo data: the database schema is not up to date ({pendingMigrations.Count} pending migration(s), first: {pendingMigrations[0]}). " +
+                "Apply the migrations first, for example by also enabling Database:MigrateOnStartup.");
+        }
+
         var timeProvider = scope.ServiceProvider.GetRequiredService<TimeProvider>();
         var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
         await DatabaseSeeder.SeedAsync(db, timeProvider, passwordHasher, cancellationToken);
-    }
-
-    /// <summary>
-    /// 本機開發用：migrate + seed 一次做完。Program.cs 在 Development 環境呼叫這個，行為與 1b 時相同。
-    /// </summary>
-    public static async Task MigrateAndSeedAsync(this IServiceProvider services, CancellationToken cancellationToken = default)
-    {
-        await services.MigrateAsync(cancellationToken);
-        await services.SeedAsync(cancellationToken);
     }
 }

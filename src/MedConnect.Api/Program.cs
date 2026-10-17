@@ -1,5 +1,6 @@
 using System.Text;
 using MedConnect.Api.ExceptionHandling;
+using MedConnect.Api.Hosting;
 using MedConnect.Api.Logging;
 using MedConnect.Application;
 using MedConnect.Infrastructure;
@@ -87,12 +88,35 @@ try
         // OpenAPI schema 本身不含任何機密、僅供本機瀏覽用途，FallbackPolicy 生效後若不明確
         // 標記，會連 Swagger/OpenAPI 文件都被擋在驗證後面，對本機開發沒有安全效益、只有麻煩。
         app.MapOpenApi().AllowAnonymous();
-        await app.Services.MigrateAndSeedAsync();
+    }
+
+    // migrate 與 seed 由兩個明確的設定開關決定，不看環境名稱（architecture-plan.md §0 v1.13）；預設都是 false。
+    // Development 的 appsettings 把兩個都設成 true，所以本機開發與整合測試的行為與以前完全相同。
+    var startupSettings = StartupSettings.From(app.Configuration);
+
+    if (startupSettings.MigrateOnStartup)
+    {
+        app.Logger.LogInformation("{Setting} is enabled: applying database migrations", StartupSettings.MigrateOnStartupKey);
+        await app.Services.MigrateAsync();
+    }
+
+    if (startupSettings.SeedDemoData)
+    {
+        // 措辭刻意是「可能」：seeder 遇到資料庫已有資料會直接跳過，這行只表示開關是開的。
+        // 不可包含示範帳號的密碼或 email。
+        app.Logger.LogWarning(
+            "{Setting} is enabled: demo data including an account with a publicly known password may be created. Never enable this against a real database",
+            StartupSettings.SeedDemoDataKey);
+        await app.Services.SeedAsync();
     }
 
     app.UseExceptionHandler();
 
-    app.UseHttpsRedirection();
+    // 容器內只聽 HTTP 8080、TLS 由外層負責時沒有 https 埠可轉，middleware 每個請求都會警告；compose 把它關掉。
+    if (startupSettings.UseHttpsRedirection)
+    {
+        app.UseHttpsRedirection();
+    }
 
     app.UseAuthentication();
     app.UseAuthorization();

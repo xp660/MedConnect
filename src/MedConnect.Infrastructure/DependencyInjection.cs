@@ -39,6 +39,10 @@ public static class DependencyInjection
         services.AddOptions<JwtOptions>()
             .Bind(configuration.GetSection(JwtOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.SecretKey), "Missing Jwt:SecretKey configuration (use `dotnet user-secrets set Jwt:SecretKey ...`).")
+            // 缺密鑰由上一條報告；這一條只管「有設但太短」。錯誤訊息絕不包含密鑰的值或任何片段。
+            .Validate(
+                o => string.IsNullOrWhiteSpace(o.SecretKey) || System.Text.Encoding.UTF8.GetByteCount(o.SecretKey) >= JwtOptions.MinSecretKeyBytes,
+                $"Jwt:SecretKey is too short: HS256 needs at least {JwtOptions.MinSecretKeyBytes} bytes (UTF-8).")
             .Validate(o => !string.IsNullOrWhiteSpace(o.Issuer), "Missing Jwt:Issuer configuration.")
             .Validate(o => !string.IsNullOrWhiteSpace(o.Audience), "Missing Jwt:Audience configuration.")
             .ValidateOnStart();

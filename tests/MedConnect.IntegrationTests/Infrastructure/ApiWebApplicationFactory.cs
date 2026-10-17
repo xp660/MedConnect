@@ -27,11 +27,15 @@ public sealed class ApiWebApplicationFactory : WebApplicationFactory<Program>, I
 
     private readonly MySqlContainer _container = MySqlTestContainer.Create();
 
+    /// <summary>容器的連線字串：測試要在 host 之外直接查資料庫（例如 host 啟動失敗時）。</summary>
+    public string ConnectionString => _container.GetConnectionString();
+
     public Task InitializeAsync() => _container.StartAsync();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Development：讓 Program.cs 既有的「Dev 環境自動 migrate + seed」區塊照常跑，
+        // Development：appsettings.Development.json 把 Database:MigrateOnStartup 與 Database:SeedDemoData 都設成 true
+        // （architecture-plan.md §0 v1.13），Program.cs 因此照常 migrate + seed，
         // 直接沿用 DatabaseSeeder 產生的固定測試病人（test-patient@medconnect.local /
         // DatabaseSeeder.TestPatientPassword）當作 Login 測試的帳號，不必在這裡重寫一份。
         builder.UseEnvironment("Development");
